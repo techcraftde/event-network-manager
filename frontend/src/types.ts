@@ -1,0 +1,9 @@
+export type Port={index:number;name:string;link:boolean;speedMbps:number;role:string;vlans:number[];pvid:number;taggedVlans:number[];untaggedVlans:number[];vlanMode:string;rxMbps:number;txMbps:number;errors:number;poeWatts:number;poeEnabled:boolean};
+export type Switch={id:string;name:string;model:string;address:string;status:string;firmwareVersion:string;hardwareVersion:string;serialNumber:string;macAddress:string;uptimeSeconds:number;cpuPercent:number;temperatureC:number;poeBudgetWatts:number;poeUsageWatts:number;ports:Port[]};
+export type Link={id:string;sourceSwitchId:string;sourcePort:number;targetSwitchId:string;targetPort:number;protocol:string};
+export type VLAN={id:number;name:string};
+export type Topology={switches:Switch[];links:Link[];updatedAt:string;source:string;vlans:VLAN[]};
+export type Snapshot={id:string;switchId:string;createdAt:string;sizeBytes:number};
+export type ConfigStatus={switchId:string;available:boolean;hostKeyTrusted:boolean;hostKeyAlgorithm?:string;hostKeyFingerprint?:string;message?:string};
+export type ConfigPlan={id:string;switchId:string;description:string;commands:string[];warnings:string[]};
+export type DanteHealth={switchId:string;vlanId:number;checkedAt:string;igmpGlobal:boolean;igmpVlan:boolean;qosDscp:boolean;selectedPorts:number;qosTrustedPorts:number;eeeDisabledPorts:number;healthy:boolean;messages:string[]};

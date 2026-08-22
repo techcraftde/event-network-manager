@@ -1,0 +1,109 @@
+package platform
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"event-network-manager/backend/internal/domain"
+)
+
+type MockAdapter struct {
+	mu        sync.Mutex
+	snapshots []domain.Snapshot
+}
+
+func (m *MockAdapter) Status(context.Context, string) (domain.ConfigStatus, error) {
+	return domain.ConfigStatus{SwitchID: "demo", Available: true, HostKeyTrusted: true, Message: "Demo-Konfiguration verfügbar"}, nil
+}
+func (m *MockAdapter) TrustHostKey(context.Context, domain.HostKeyTrust) (domain.ConfigStatus, error) {
+	return domain.ConfigStatus{SwitchID: "demo", Available: true, HostKeyTrusted: true}, nil
+}
+func (m *MockAdapter) DantePlan(_ context.Context, request domain.DantePlanRequest) (domain.ConfigPlan, error) {
+	return buildDantePlan(request)
+}
+func (m *MockAdapter) VLANPlan(_ context.Context, request domain.VLANPlanRequest) (domain.ConfigPlan, error) {
+	return buildVLANPlan(request)
+}
+func (m *MockAdapter) DanteHealth(_ context.Context, request domain.DanteHealthRequest) (domain.DanteHealth, error) {
+	ports, err := normalizePorts(request.Ports, 24)
+	if err != nil {
+		return domain.DanteHealth{}, err
+	}
+	configuration := fmt.Sprintf("ip igmp snooping\nip igmp snooping vlan %d\nqos trust dscp\n", request.VLANID)
+	for _, port := range ports {
+		configuration += fmt.Sprintf("interface gi1/0/%d\n qos trust\n no eee enable\n exit\n", port)
+	}
+	return inspectDanteConfiguration(request.SwitchID, request.VLANID, ports, configuration), nil
+}
+func (m *MockAdapter) CaptureSnapshot(ctx context.Context, switchID string) (domain.Snapshot, error) {
+	s := domain.Snapshot{ID: fmt.Sprintf("snap-%d", time.Now().UnixNano()), SwitchID: switchID, CreatedAt: time.Now(), Configuration: "! mock running-config", SizeBytes: len("! mock running-config")}
+	return s, m.Save(ctx, s)
+}
+
+func NewMockServices() Services {
+	m := &MockAdapter{}
+	return Services{Mode: "mock", Discovery: m, Telemetry: m, Configurator: m, Snapshots: m}
+}
+
+func (m *MockAdapter) Discover(ctx context.Context) ([]domain.Switch, error) {
+	t, err := m.Topology(ctx)
+	return t.Switches, err
+}
+
+func (m *MockAdapter) Topology(context.Context) (domain.Topology, error) {
+	now := time.Now()
+	return domain.Topology{UpdatedAt: now, Source: "Demo", Switches: []domain.Switch{
+		{ID: "foh", Name: "FOH Core", Model: "SG350-28P", Address: "192.168.50.2", Status: "online", CPUPercent: 18, TemperatureC: 42, Ports: mockPorts(28, 1)},
+		{ID: "stage", Name: "Stage Left", Model: "SG350-28", Address: "192.168.50.3", Status: "online", CPUPercent: 11, TemperatureC: 39, Ports: mockPorts(28, 2)},
+		{ID: "video", Name: "Video Rack", Model: "SG350-28P", Address: "192.168.50.4", Status: "warning", CPUPercent: 27, TemperatureC: 47, Ports: mockPorts(28, 3)},
+	}, Links: []domain.Link{
+		{ID: "foh-stage", SourceSwitchID: "foh", SourcePort: 25, TargetSwitchID: "stage", TargetPort: 25, Protocol: "LLDP"},
+		{ID: "foh-video", SourceSwitchID: "foh", SourcePort: 26, TargetSwitchID: "video", TargetPort: 25, Protocol: "CDP"},
+	}}, nil
+}
+
+func mockPorts(count, seed int) []domain.Port {
+	ports := make([]domain.Port, count)
+	roles := []string{"Dante", "Control", "Lighting", "Video", "Unused"}
+	for i := range ports {
+		idx := i + 1
+		link := idx <= 10 || idx >= 25
+		role := roles[(idx+seed)%len(roles)]
+		ports[i] = domain.Port{Index: idx, Name: fmt.Sprintf("gi%d", idx), Link: link, SpeedMbps: 1000, Role: role, VLANs: []int{10 + (idx%4)*10}, RxMbps: float64((idx*seed*7)%90) / 10, TxMbps: float64((idx*seed*11)%70) / 10}
+		if role == "Dante" && link {
+			ports[i].PoEWatts = 6.4
+		}
+	}
+	return ports
+}
+
+func (m *MockAdapter) Apply(ctx context.Context, change domain.ConfigChange) (domain.Snapshot, error) {
+	// The production adapter must retrieve and persist running-config before SSH.
+	s := domain.Snapshot{ID: fmt.Sprintf("snap-%d", time.Now().UnixNano()), SwitchID: change.SwitchID, CreatedAt: time.Now(), Configuration: "! mock running-config before: " + change.Description}
+	s.SizeBytes = len(s.Configuration)
+	if err := m.Save(ctx, s); err != nil {
+		return domain.Snapshot{}, err
+	}
+	return s, nil
+}
+
+func (m *MockAdapter) Rollback(context.Context, string) error { return nil }
+func (m *MockAdapter) Save(_ context.Context, s domain.Snapshot) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.snapshots = append(m.snapshots, s)
+	return nil
+}
+func (m *MockAdapter) List(_ context.Context, switchID string) ([]domain.Snapshot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []domain.Snapshot{}
+	for _, s := range m.snapshots {
+		if switchID == "" || s.SwitchID == switchID {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
