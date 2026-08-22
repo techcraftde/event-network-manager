@@ -34,10 +34,74 @@ func NewHandler(services platform.Services) http.Handler {
 	mux.HandleFunc("PUT /api/switches/name", h.saveSwitchName)
 	mux.HandleFunc("POST /api/config/role-plan", h.rolePlan)
 	mux.HandleFunc("POST /api/config/apply-role", h.applyRole)
+	mux.HandleFunc("GET /api/config/event-baseline", h.eventBaselineStatus)
+	mux.HandleFunc("POST /api/config/event-baseline-plan", h.eventBaselinePlan)
+	mux.HandleFunc("POST /api/config/apply-event-baseline", h.applyEventBaseline)
 	mux.HandleFunc("POST /api/config/dante-health", h.danteHealth)
+	mux.HandleFunc("POST /api/config/save-startup", h.saveStartup)
 	mux.HandleFunc("POST /api/config/apply", h.apply)
 	mux.HandleFunc("POST /api/config/rollback/{id}", h.rollback)
 	return cors(mux)
+}
+func (h *Handler) eventBaselineStatus(w http.ResponseWriter, r *http.Request) {
+	profiles, err := h.services.Preferences.RoleProfiles(r.Context())
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	status, err := h.services.Configurator.EventBaselineStatus(r.Context(), r.URL.Query().Get("switchId"), profiles)
+	respond(w, status, err)
+}
+func (h *Handler) eventBaselinePlan(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		SwitchID string `json:"switchId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		write(w, 400, map[string]string{"error": "ungültige Anfrage"})
+		return
+	}
+	profiles, err := h.services.Preferences.RoleProfiles(r.Context())
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	topology, err := h.services.Telemetry.Topology(r.Context())
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	plan, err := platform.BuildEventBaselinePlan(request.SwitchID, profiles, topology.VLANs)
+	respond(w, plan, err)
+}
+func (h *Handler) applyEventBaseline(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Plan domain.ConfigPlan `json:"plan"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		write(w, 400, map[string]string{"error": "ungültige Anfrage"})
+		return
+	}
+	profiles, err := h.services.Preferences.RoleProfiles(r.Context())
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	topology, err := h.services.Telemetry.Topology(r.Context())
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	rebuilt, err := platform.BuildEventBaselinePlan(request.Plan.SwitchID, profiles, topology.VLANs)
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	if strings.Join(rebuilt.Commands, "\n") != strings.Join(request.Plan.Commands, "\n") {
+		write(w, 409, map[string]string{"error": "Die Switch-Daten haben sich geändert. Bitte erneut prüfen."})
+		return
+	}
+	snapshot, err := h.services.Configurator.Apply(r.Context(), domain.ConfigChange{SwitchID: rebuilt.SwitchID, Description: rebuilt.Description, Commands: rebuilt.Commands})
+	respond(w, snapshot, err)
 }
 func (h *Handler) alarms(w http.ResponseWriter, r *http.Request) {
 	topology, err := h.services.Telemetry.Topology(r.Context())
@@ -63,12 +127,17 @@ func (h *Handler) saveSwitchName(w http.ResponseWriter, r *http.Request) {
 		write(w, 400, map[string]string{"error": "ungültige Anfrage"})
 		return
 	}
-	request.Name = strings.TrimSpace(request.Name)
-	if request.SwitchID == "" || len([]rune(request.Name)) < 1 || len([]rune(request.Name)) > 64 || strings.ContainsAny(request.Name, "\r\n\x00") {
-		write(w, 400, map[string]string{"error": "Der Switch-Name muss 1–64 Zeichen lang sein"})
+	plan, actualName, err := platform.BuildSwitchNamePlan(request.SwitchID, request.Name)
+	if err != nil {
+		write(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
-	err := h.services.Preferences.SaveSwitchDisplayName(r.Context(), request.SwitchID, request.Name)
+	request.Name = actualName
+	if h.services.StateReader != nil {
+		_, err = h.services.Configurator.Apply(r.Context(), domain.ConfigChange{SwitchID: plan.SwitchID, Description: plan.Description, Commands: plan.Commands})
+	} else {
+		err = h.services.Preferences.SaveSwitchDisplayName(r.Context(), request.SwitchID, request.Name)
+	}
 	respond(w, request, err)
 }
 func (h *Handler) roles(w http.ResponseWriter, r *http.Request) {
@@ -159,6 +228,10 @@ func (h *Handler) applyRole(w http.ResponseWriter, r *http.Request) {
 	snapshot, err := h.services.Configurator.Apply(r.Context(), domain.ConfigChange{SwitchID: rebuilt.SwitchID, Description: rebuilt.Description, Commands: rebuilt.Commands})
 	if err != nil {
 		respond(w, nil, err)
+		return
+	}
+	if h.services.StateReader != nil {
+		respond(w, snapshot, nil)
 		return
 	}
 	current, err := h.services.Preferences.PortSettings(r.Context(), rebuilt.SwitchID)
@@ -305,15 +378,28 @@ func (h *Handler) decorateTopology(r *http.Request, topology *domain.Topology) e
 		profileByID[profile.ID] = profile
 	}
 	for si := range topology.Switches {
-		if h.services.Preferences != nil {
+		settings := map[int]domain.PortSetting{}
+		liveState := false
+		if h.services.StateReader != nil {
+			state, err := h.services.StateReader.ConfigurationState(r.Context(), topology.Switches[si].ID, profiles)
+			if err == nil {
+				liveState = true
+				if state.Name != "" {
+					topology.Switches[si].Name = state.Name
+				}
+				for _, setting := range state.PortSettings {
+					settings[setting.PortIndex] = setting
+				}
+			}
+		}
+		if !liveState && h.services.Preferences != nil {
 			if name, found, err := h.services.Preferences.SwitchDisplayName(r.Context(), topology.Switches[si].ID); err != nil {
 				return err
 			} else if found {
 				topology.Switches[si].Name = name
 			}
 		}
-		settings := map[int]domain.PortSetting{}
-		if h.services.Preferences != nil {
+		if !liveState && h.services.Preferences != nil {
 			stored, err := h.services.Preferences.PortSettings(r.Context(), topology.Switches[si].ID)
 			if err != nil {
 				return err
@@ -326,7 +412,10 @@ func (h *Handler) decorateTopology(r *http.Request, topology *domain.Topology) e
 			port := &topology.Switches[si].Ports[pi]
 			port.DisplayName = "Port " + fmt.Sprint(port.Index)
 			if setting, ok := settings[port.Index]; ok {
-				port.DisplayName, port.RoleID = setting.DisplayName, setting.RoleID
+				if setting.DisplayName != "" {
+					port.DisplayName = setting.DisplayName
+				}
+				port.RoleID = setting.RoleID
 				if profile, found := profileByID[setting.RoleID]; found {
 					port.Role = profile.Name
 				}
@@ -356,6 +445,17 @@ func (h *Handler) captureSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	v, err := h.services.Configurator.CaptureSnapshot(r.Context(), request.SwitchID)
 	respond(w, v, err)
+}
+func (h *Handler) saveStartup(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		SwitchID string `json:"switchId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		write(w, 400, map[string]string{"error": "ungültige Anfrage"})
+		return
+	}
+	err := h.services.Configurator.SaveStartup(r.Context(), request.SwitchID)
+	respond(w, map[string]bool{"ok": err == nil}, err)
 }
 func (h *Handler) apply(w http.ResponseWriter, r *http.Request) {
 	var c domain.ConfigChange

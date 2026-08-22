@@ -164,14 +164,23 @@ func (s *Store) RollbackCommands(ctx context.Context, snapshotID string) ([]stri
 }
 
 func (s *Store) ensureDefaultRoles(ctx context.Context) error {
-	var count int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM role_profiles`).Scan(&count); err != nil {
+	const catalogVersion = "2"
+	var currentVersion string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key='role_catalog_version'`).Scan(&currentVersion)
+	if err != nil && err != sql.ErrNoRows {
 		return err
 	}
-	if count != 0 {
+	if currentVersion == catalogVersion {
 		return nil
 	}
-	return s.SaveRoleProfiles(ctx, domain.DefaultRoleProfiles())
+	if err := s.SaveRoleProfiles(ctx, domain.DefaultRoleProfiles()); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE port_settings SET role_id='trunk' WHERE role_id='management'`); err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES('role_catalog_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, catalogVersion)
+	return err
 }
 
 func (s *Store) RoleProfiles(ctx context.Context) ([]domain.RoleProfile, error) {

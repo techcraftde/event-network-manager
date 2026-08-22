@@ -12,3 +12,5 @@ export type RoleProfile={id:string;name:string;description:string;color:string;i
 export type RolePortRequest={portIndex:number;displayName:string;roleId:string};
 export type Alarm={id:string;severity:'critical'|'warning'|'info';category:string;switchId:string;switchName:string;portIndex?:number;portName?:string;title:string;message:string;recommendation:string;currentValue?:number;threshold?:number;detectedAt:string};
 export type AlarmReport={generatedAt:string;healthPercent:number;criticalCount:number;warningCount:number;infoCount:number;checksOk:string[];alarms:Alarm[]};
+export type EventBaselineCheck={id:string;title:string;description:string;ok:boolean};
+export type EventBaselineStatus={switchId:string;checkedAt:string;healthy:boolean;checks:EventBaselineCheck[]};

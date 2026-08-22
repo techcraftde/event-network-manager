@@ -36,7 +36,7 @@ func TestRoleAndFriendlyNamesRoundTrip(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	profiles, err := store.RoleProfiles(ctx)
-	if err != nil || len(profiles) != 7 {
+	if err != nil || len(profiles) != 6 {
 		t.Fatalf("profiles=%d err=%v", len(profiles), err)
 	}
 	setting := domain.PortSetting{SwitchID: "switch-1", PortIndex: 3, DisplayName: "Lichtpult", RoleID: "lighting"}

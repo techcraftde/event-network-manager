@@ -37,11 +37,34 @@ func TestDanteHealthEndpoint(t *testing.T) {
 	}
 }
 
+func TestSaveStartupEndpoint(t *testing.T) {
+	r := httptest.NewRequest("POST", "/api/config/save-startup", strings.NewReader(`{"switchId":"foh"}`))
+	w := httptest.NewRecorder()
+	NewHandler(platform.NewMockServices()).ServeHTTP(w, r)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"ok":true`) {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestRolePlanEndpoint(t *testing.T) {
 	r := httptest.NewRequest("POST", "/api/config/role-plan", strings.NewReader(`{"switchId":"foh","ports":[{"portIndex":2,"displayName":"Lichtpult","roleId":"lighting"}]}`))
 	w := httptest.NewRecorder()
 	NewHandler(platform.NewMockServices()).ServeHTTP(w, r)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `description \"Lichtpult\"`) || !strings.Contains(w.Body.String(), "Lighting") {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestEventBaselineEndpoints(t *testing.T) {
+	h := NewHandler(platform.NewMockServices())
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/api/config/event-baseline?switchId=foh", nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"healthy":true`) {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("POST", "/api/config/event-baseline-plan", strings.NewReader(`{"switchId":"foh"}`)))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "bridge multicast filtering") {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
 }
@@ -55,7 +78,7 @@ func TestSwitchRenameDecoratesTopology(t *testing.T) {
 	}
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest("GET", "/api/topology", nil))
-	if !strings.Contains(w.Body.String(), `"name":"FOH Rack"`) || !strings.Contains(w.Body.String(), `"displayName":"Port 1"`) {
+	if !strings.Contains(w.Body.String(), `"name":"FOH-Rack"`) || !strings.Contains(w.Body.String(), `"displayName":"Port 1"`) {
 		t.Fatalf("body=%s", w.Body.String())
 	}
 }

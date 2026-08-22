@@ -18,7 +18,20 @@ type MultiAdapter struct {
 
 func NewMultiServices(devices []Services, snapshots SnapshotStore) Services {
 	m := &MultiAdapter{devices: devices, snapshots: snapshots}
-	return Services{Mode: "sg350-multi", Discovery: m, Telemetry: m, Inventory: m, Configurator: m, Snapshots: snapshots}
+	return Services{Mode: "sg350-multi", Discovery: m, Telemetry: m, Inventory: m, StateReader: m, Configurator: m, Snapshots: snapshots}
+}
+
+func (m *MultiAdapter) ConfigurationState(ctx context.Context, switchID string, profiles []domain.RoleProfile) (domain.SwitchConfigState, error) {
+	for _, device := range m.devices {
+		if device.StateReader == nil {
+			continue
+		}
+		state, err := device.StateReader.ConfigurationState(ctx, switchID, profiles)
+		if err == nil && state.SwitchID == switchID {
+			return state, nil
+		}
+	}
+	return domain.SwitchConfigState{}, fmt.Errorf("Konfiguration für Switch %q ist nicht lesbar", switchID)
 }
 
 func (m *MultiAdapter) ConnectedDevices(ctx context.Context, switchID string) ([]domain.ConnectedDevice, error) {
@@ -125,12 +138,26 @@ func (m *MultiAdapter) DanteHealth(ctx context.Context, request domain.DanteHeal
 	}
 	return target.DanteHealth(ctx, request)
 }
+func (m *MultiAdapter) EventBaselineStatus(ctx context.Context, switchID string, profiles []domain.RoleProfile) (domain.EventBaselineStatus, error) {
+	target, err := m.target(ctx, switchID)
+	if err != nil {
+		return domain.EventBaselineStatus{}, err
+	}
+	return target.EventBaselineStatus(ctx, switchID, profiles)
+}
 func (m *MultiAdapter) CaptureSnapshot(ctx context.Context, switchID string) (domain.Snapshot, error) {
 	target, err := m.target(ctx, switchID)
 	if err != nil {
 		return domain.Snapshot{}, err
 	}
 	return target.CaptureSnapshot(ctx, switchID)
+}
+func (m *MultiAdapter) SaveStartup(ctx context.Context, switchID string) error {
+	target, err := m.target(ctx, switchID)
+	if err != nil {
+		return err
+	}
+	return target.SaveStartup(ctx, switchID)
 }
 func (m *MultiAdapter) Apply(ctx context.Context, change domain.ConfigChange) (domain.Snapshot, error) {
 	target, err := m.target(ctx, change.SwitchID)

@@ -109,8 +109,14 @@ func (readOnlyConfigurator) VLANPlan(_ context.Context, request domain.VLANPlanR
 func (readOnlyConfigurator) DanteHealth(context.Context, domain.DanteHealthRequest) (domain.DanteHealth, error) {
 	return domain.DanteHealth{}, errors.New("SSH-Konfiguration ist nicht eingerichtet")
 }
+func (readOnlyConfigurator) EventBaselineStatus(context.Context, string, []domain.RoleProfile) (domain.EventBaselineStatus, error) {
+	return domain.EventBaselineStatus{}, errors.New("SSH-Konfiguration ist nicht eingerichtet")
+}
 func (readOnlyConfigurator) CaptureSnapshot(context.Context, string) (domain.Snapshot, error) {
 	return domain.Snapshot{}, errors.New("SSH configuration is not configured")
+}
+func (readOnlyConfigurator) SaveStartup(context.Context, string) error {
+	return errors.New("Startkonfiguration kann ohne SSH nicht gespeichert werden")
 }
 
 func (readOnlyConfigurator) Apply(context.Context, domain.ConfigChange) (domain.Snapshot, error) {
@@ -176,6 +182,12 @@ func NewSG350WebServices(config SG350WebConfig) (Services, error) {
 		Inventory: func() DeviceInventory {
 			if inventory, ok := configurator.(DeviceInventory); ok {
 				return inventory
+			}
+			return nil
+		}(),
+		StateReader: func() ConfigStateReader {
+			if reader, ok := configurator.(ConfigStateReader); ok {
+				return reader
 			}
 			return nil
 		}(),

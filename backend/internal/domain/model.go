@@ -83,13 +83,12 @@ type RoleApplyRequest struct {
 
 func DefaultRoleProfiles() []RoleProfile {
 	return []RoleProfile{
-		{ID: "dante", Name: "Dante/Audio", Description: "Für digitale Audionetzwerke: priorisiert Audio und schützt Multicast-Streams.", Color: "#9168ff", Icon: "♪", VLANID: 20, PortMode: "access", Multicast: true, DanteQoS: true, DisableEEE: true, PoEMode: "auto"},
-		{ID: "control", Name: "Control", Description: "Für Steuerpulte, Controller und Geräteverwaltung.", Color: "#23a7ff", Icon: "⌁", VLANID: 10, PortMode: "access", PoEMode: "auto"},
-		{ID: "lighting", Name: "Lighting", Description: "Für Art-Net, sACN und Lichtsteuerung mit optimierter Gruppenkommunikation.", Color: "#f0aa34", Icon: "✦", VLANID: 30, PortMode: "access", Multicast: true, PoEMode: "auto"},
-		{ID: "video", Name: "Video", Description: "Für Video-over-IP und andere bandbreitenintensive Multicast-Signale.", Color: "#ed5d86", Icon: "▶", VLANID: 40, PortMode: "access", Multicast: true, PoEMode: "auto"},
-		{ID: "internet", Name: "Internet", Description: "Für Internetzugang und allgemeine Datengeräte.", Color: "#2ed47a", Icon: "◎", VLANID: 50, PortMode: "access", PoEMode: "auto"},
-		{ID: "trunk", Name: "Trunk", Description: "Verbindet Switches und transportiert die ausgewählten Rollen gemeinsam.", Color: "#5ea8ff", Icon: "⇄", PortMode: "trunk", PoEMode: "off", AllowedRoleIDs: []string{"dante", "control", "lighting", "video", "internet", "management"}},
-		{ID: "management", Name: "Switch-Management", Description: "Ausschließlich für die Verwaltung der Netzwerk-Switches.", Color: "#9aa8b5", Icon: "⚙", VLANID: 99, PortMode: "access", PoEMode: "auto"},
+		{ID: "dante", Name: "Dante/Audio", Description: "Für digitale Audionetzwerke: priorisiert Audio und schützt Multicast-Streams.", Color: "#9168ff", Icon: "♪", VLANID: 1, PortMode: "access", Multicast: true, DanteQoS: true, DisableEEE: true, PoEMode: "auto"},
+		{ID: "control", Name: "Control", Description: "Für Yamaha-Steuerung, Editoren, Controller und Geräteverwaltung – getrennt vom Audionetz.", Color: "#23a7ff", Icon: "⌁", VLANID: 2, PortMode: "access", PoEMode: "auto"},
+		{ID: "lighting", Name: "Lighting", Description: "Für MA-Net2/3, Art-Net und sACN mit stabiler Multicast-Verteilung.", Color: "#f0aa34", Icon: "✦", VLANID: 3, PortMode: "access", Multicast: true, DisableEEE: true, PoEMode: "auto"},
+		{ID: "internet", Name: "Internet", Description: "Für Internetzugang und allgemeine Datengeräte.", Color: "#2ed47a", Icon: "◎", VLANID: 4, PortMode: "access", PoEMode: "auto"},
+		{ID: "video", Name: "Video", Description: "Für Video-over-IP und andere bandbreitenintensive Multicast-Signale.", Color: "#ed5d86", Icon: "▶", VLANID: 5, PortMode: "access", Multicast: true, DisableEEE: true, PoEMode: "auto"},
+		{ID: "trunk", Name: "Trunk/Management", Description: "Für Switch-Uplinks: transportiert alle Rollen und das Management-Netz gemeinsam.", Color: "#5ea8ff", Icon: "⇄", VLANID: 4000, PortMode: "trunk", DisableEEE: true, PoEMode: "off", AllowedRoleIDs: []string{"dante", "control", "lighting", "internet", "video"}},
 	}
 }
 
@@ -132,6 +131,12 @@ type Topology struct {
 type SwitchNameRequest struct {
 	SwitchID string `json:"switchId"`
 	Name     string `json:"name"`
+}
+
+type SwitchConfigState struct {
+	SwitchID     string        `json:"switchId"`
+	Name         string        `json:"name"`
+	PortSettings []PortSetting `json:"portSettings"`
 }
 
 type ConfigChange struct {
@@ -194,6 +199,20 @@ type ConfigPlan struct {
 	Description string   `json:"description"`
 	Commands    []string `json:"commands"`
 	Warnings    []string `json:"warnings"`
+}
+
+type EventBaselineCheck struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	OK          bool   `json:"ok"`
+}
+
+type EventBaselineStatus struct {
+	SwitchID  string               `json:"switchId"`
+	CheckedAt time.Time            `json:"checkedAt"`
+	Healthy   bool                 `json:"healthy"`
+	Checks    []EventBaselineCheck `json:"checks"`
 }
 
 type Snapshot struct {

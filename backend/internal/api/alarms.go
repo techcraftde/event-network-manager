@@ -111,6 +111,18 @@ func (m *alarmMonitor) evaluate(topology domain.Topology) domain.AlarmReport {
 				alarm.Threshold = 1000
 				add(alarm)
 			}
+			if port.RoleID == "lighting" && port.SpeedMbps > 0 && port.SpeedMbps < 1000 {
+				alarm := base
+				alarm.ID = fmt.Sprintf("%s-%d-lighting-speed", sw.ID, port.Index)
+				alarm.Severity = "warning"
+				alarm.Category = "Lighting"
+				alarm.Title = "Lighting-Port unter 1 Gbit/s"
+				alarm.Message = fmt.Sprintf("%s handelt nur %d Mbit/s aus.", portName, port.SpeedMbps)
+				alarm.Recommendation = "Kabel und Endgerät prüfen; MA-Net3 setzt 1 Gbit/s voraus."
+				alarm.CurrentValue = float64(port.SpeedMbps)
+				alarm.Threshold = 1000
+				add(alarm)
+			}
 		}
 	}
 	for id := range m.firstSeen {

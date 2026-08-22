@@ -41,6 +41,15 @@ func (m *MockAdapter) DanteHealth(_ context.Context, request domain.DanteHealthR
 	}
 	return inspectDanteConfiguration(request.SwitchID, request.VLANID, ports, configuration), nil
 }
+func (m *MockAdapter) EventBaselineStatus(_ context.Context, switchID string, _ []domain.RoleProfile) (domain.EventBaselineStatus, error) {
+	checks := []domain.EventBaselineCheck{
+		{ID: "networks", Title: "Rollen-Netzwerke", Description: "Alle benötigten Netzwerke sind vorbereitet.", OK: true},
+		{ID: "multicast", Title: "Multicast", Description: "IGMP Snooping und Querier sind aktiv.", OK: true},
+		{ID: "qos", Title: "Audio-Priorisierung", Description: "Dante-Pakete werden priorisiert.", OK: true},
+		{ID: "eee", Title: "Stabile Links", Description: "EEE ist deaktiviert.", OK: true},
+	}
+	return domain.EventBaselineStatus{SwitchID: switchID, CheckedAt: time.Now(), Healthy: true, Checks: checks}, nil
+}
 func (m *MockAdapter) CaptureSnapshot(ctx context.Context, switchID string) (domain.Snapshot, error) {
 	s := domain.Snapshot{ID: fmt.Sprintf("snap-%d", time.Now().UnixNano()), SwitchID: switchID, CreatedAt: time.Now(), Configuration: "! mock running-config", SizeBytes: len("! mock running-config")}
 	return s, m.Save(ctx, s)
@@ -49,6 +58,11 @@ func (m *MockAdapter) CaptureSnapshot(ctx context.Context, switchID string) (dom
 func NewMockServices() Services {
 	m := &MockAdapter{profiles: domain.DefaultRoleProfiles(), switchNames: map[string]string{}, roleRollbacks: map[string][]domain.PortSetting{}}
 	return Services{Mode: "mock", Discovery: m, Telemetry: m, Inventory: m, Configurator: m, Snapshots: m, Preferences: m}
+}
+func (m *MockAdapter) ConfigurationState(_ context.Context, switchID string, _ []domain.RoleProfile) (domain.SwitchConfigState, error) {
+	settings, _ := m.PortSettings(context.Background(), switchID)
+	name, _, _ := m.SwitchDisplayName(context.Background(), switchID)
+	return domain.SwitchConfigState{SwitchID: switchID, Name: name, PortSettings: settings}, nil
 }
 func (m *MockAdapter) ConnectedDevices(context.Context, string) ([]domain.ConnectedDevice, error) {
 	return []domain.ConnectedDevice{{ID: "device-console", SwitchID: "foh", PortIndex: 2, Name: "Yamaha CL5", IPAddress: "192.168.50.20", MACAddress: "00:11:22:33:44:55", Model: "Dante Console", SuggestedRole: "Dante/Audio", Protocol: "LLDP/MAC"}}, nil
@@ -96,7 +110,8 @@ func (m *MockAdapter) Apply(ctx context.Context, change domain.ConfigChange) (do
 	return s, nil
 }
 
-func (m *MockAdapter) Rollback(context.Context, string) error { return nil }
+func (m *MockAdapter) SaveStartup(context.Context, string) error { return nil }
+func (m *MockAdapter) Rollback(context.Context, string) error    { return nil }
 func (m *MockAdapter) Save(_ context.Context, s domain.Snapshot) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -16,13 +16,18 @@ type Telemetry interface {
 type DeviceInventory interface {
 	ConnectedDevices(context.Context, string) ([]domain.ConnectedDevice, error)
 }
+type ConfigStateReader interface {
+	ConfigurationState(context.Context, string, []domain.RoleProfile) (domain.SwitchConfigState, error)
+}
 type Configurator interface {
 	Status(context.Context, string) (domain.ConfigStatus, error)
 	TrustHostKey(context.Context, domain.HostKeyTrust) (domain.ConfigStatus, error)
 	DantePlan(context.Context, domain.DantePlanRequest) (domain.ConfigPlan, error)
 	VLANPlan(context.Context, domain.VLANPlanRequest) (domain.ConfigPlan, error)
 	DanteHealth(context.Context, domain.DanteHealthRequest) (domain.DanteHealth, error)
+	EventBaselineStatus(context.Context, string, []domain.RoleProfile) (domain.EventBaselineStatus, error)
 	CaptureSnapshot(context.Context, string) (domain.Snapshot, error)
+	SaveStartup(context.Context, string) error
 	Apply(context.Context, domain.ConfigChange) (domain.Snapshot, error)
 	Rollback(context.Context, string) error
 }
@@ -57,6 +62,7 @@ type Services struct {
 	Discovery    Discovery
 	Telemetry    Telemetry
 	Inventory    DeviceInventory
+	StateReader  ConfigStateReader
 	Configurator Configurator
 	Snapshots    SnapshotStore
 	Preferences  RoleStore

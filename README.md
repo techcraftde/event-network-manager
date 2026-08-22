@@ -7,21 +7,32 @@ Snapshots in SQLite.
 
 ## Funktionen
 
-- Rollenbasierte Portkonfiguration für Dante/Audio, Control, Lighting, Video,
-  Internet, Trunk und Switch-Management
+- Rollenbasierte Mehrfach-Portkonfiguration für Dante/Audio, Control, Lighting,
+  Video, Internet und das gemeinsame Profil Trunk/Management
 - Verständliche, frei wählbare Port- und Switch-Namen; VLAN, PVID, QoS, IGMP,
   EEE und PoE werden aus zentralen Rollenprofilen abgeleitet
 - Multi-Switch-Topologie mit LLDP-/CDP- und MAC-/ARP-Endgeräteerkennung
-- 28-Port-Ansicht mit Link, Speed, RX/TX, Fehlern und PoE
+- physische SG350-28(P)-Frontansicht mit zwei RJ45-Reihen und separatem
+  Combo-/SFP-Uplinkblock; Bedienung zeigt konsequent `Port 1` bis `Port 28`
 - Switchübergreifende Auslastungsübersicht mit Kapazitätsbalken, Sitzungsspitzen,
   Sortierung und Filtern nach Switch, Rolle und Linkstatus
 - Event-Check und Alarmsystem für Erreichbarkeit, Auslastung, Dante-Link-Speed,
   Paketfehler, Temperatur und PoE-Budget
-- Dante-Zustandsprüfung für IGMP Snooping, DSCP QoS und EEE
-- verständliche Bestätigung; Cisco-Befehle bleiben als optionale Details verfügbar
+- Dante-/Yamaha-Profil mit IGMP Snooping/Querier, DSCP 56/46/8 auf vier
+  Prioritätsqueues, Port-Trust, deaktiviertem EEE und deaktiviertem Flow Control
+- Lighting-Profil für MA-Net2/3, Art-Net und sACN mit Multicast-Optimierung,
+  Querier, EEE-Abschaltung und Warnung bei Links unter 1 Gbit/s
+- geführtes Event-Grundsetup für Rollen-Netzwerke, IGMP Snooping/Querier,
+  Dante-DSCP-Prioritäten und global deaktiviertes EEE
+- direkte Portanwendung ohne Vorschau- oder Mehrfachbestätigung, sichtbarer
+  Acht-Schritt-Fortschritt und automatisches Neuladen vom echten Switch
+- eigener Schalter oben rechts zum Lesen, Speichern und Prüfen der Startup Config
 - vollständiger Running-Config-Snapshot vor jeder Änderung
-- persistenter inverser Rollback-Plan inklusive lokaler Rollenzuweisungen und
-  Speicherung in Startup Config
+- persistenter inverser Rollback-Plan und Speicherung in Startup Config
+- erneutes Lesen und Verifizieren der Startup Config nach jeder Änderung
+- Switch als Betriebsquelle: Scan liest Hostname, Portbeschreibungen und Rollen
+  direkt aus der laufenden Switch-Konfiguration; ein neuer Mac rekonstruiert die
+  Ansicht ohne lokale Port-Zuordnungen
 - SSH-Host-Key-Pinning; Passwörter bleiben im macOS-Schlüsselbund
 - lokale HTTP-API als Grenze für einen späteren Proxmox-Remote-Agent
 
@@ -68,6 +79,7 @@ in Produktionsumgebungen durch einen Credential-Provider injiziert werden.
 - serverseitiger Neuaufbau und Abgleich jedes Rollenplans vor dem Anwenden
 - automatische Rücknahme teilweise angewendeter Befehle bei CLI- oder
   Verifikationsfehlern
+- serialisierte SSH-Zugriffe für die älteren SG350-SSH-Server
 - keine Ausgabe von Running Configs über die HTTP-API
 
 ## Projektstruktur
@@ -78,3 +90,6 @@ in Produktionsumgebungen durch einen Credential-Provider injiziert werden.
 - `docs/` – Architektur und Roadmap
 
 Details zu Änderungen stehen in [CHANGELOG.md](CHANGELOG.md).
+
+Der Quellstand und private macOS-Releases liegen im privaten
+[GitHub-Repository](https://github.com/techcraftde/event-network-manager).

@@ -35,10 +35,14 @@ type SG350SSHConfig struct {
 type SG350SSHConfigurator struct {
 	config         SG350SSHConfig
 	mu             sync.Mutex
+	sshMu          sync.Mutex
 	lastSnapshotID string
 	inventoryMu    sync.Mutex
 	inventoryAt    time.Time
 	inventory      []domain.ConnectedDevice
+	stateMu        sync.Mutex
+	stateAt        time.Time
+	stateConfig    string
 }
 
 type observedHostKey struct {
@@ -62,6 +66,8 @@ func (a *SG350SSHConfigurator) ConnectedDevices(ctx context.Context, switchID st
 	if time.Since(a.inventoryAt) < 30*time.Second {
 		return append([]domain.ConnectedDevice(nil), a.inventory...), nil
 	}
+	a.sshMu.Lock()
+	defer a.sshMu.Unlock()
 	client, err := a.dial(ctx)
 	if err != nil {
 		return nil, err
@@ -74,6 +80,87 @@ func (a *SG350SSHConfigurator) ConnectedDevices(ctx context.Context, switchID st
 	a.inventory = parseConnectedDevices(a.config.SwitchID, output)
 	a.inventoryAt = time.Now()
 	return append([]domain.ConnectedDevice(nil), a.inventory...), nil
+}
+
+func (a *SG350SSHConfigurator) ConfigurationState(ctx context.Context, switchID string, profiles []domain.RoleProfile) (domain.SwitchConfigState, error) {
+	if switchID != "" && switchID != a.config.SwitchID {
+		return domain.SwitchConfigState{}, fmt.Errorf("unknown switch %q", switchID)
+	}
+	configuration, err := a.runningConfiguration(ctx)
+	if err != nil {
+		return domain.SwitchConfigState{}, err
+	}
+	return parseSwitchConfigState(a.config.SwitchID, configuration, profiles), nil
+}
+
+func (a *SG350SSHConfigurator) runningConfiguration(ctx context.Context) (string, error) {
+	a.stateMu.Lock()
+	if a.stateConfig != "" && time.Since(a.stateAt) < 20*time.Second {
+		configuration := a.stateConfig
+		a.stateMu.Unlock()
+		return configuration, nil
+	}
+	a.stateMu.Unlock()
+	a.sshMu.Lock()
+	defer a.sshMu.Unlock()
+	client, err := a.dial(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer client.Close()
+	configuration, err := a.run(client, []string{"terminal datadump", "show running-config"})
+	if err != nil || strings.TrimSpace(configuration) == "" {
+		return "", fmt.Errorf("Switch-Konfiguration konnte nicht gelesen werden: %w", err)
+	}
+	a.stateMu.Lock()
+	a.stateConfig, a.stateAt = configuration, time.Now()
+	a.stateMu.Unlock()
+	return configuration, nil
+}
+
+func (a *SG350SSHConfigurator) invalidateConfigurationCache() {
+	a.stateMu.Lock()
+	a.stateAt = time.Time{}
+	a.stateConfig = ""
+	a.stateMu.Unlock()
+}
+
+func parseSwitchConfigState(switchID, configuration string, profiles []domain.RoleProfile) domain.SwitchConfigState {
+	state := domain.SwitchConfigState{SwitchID: switchID}
+	if match := regexp.MustCompile(`(?m)^hostname\s+([^\r\n]+)$`).FindStringSubmatch(configuration); len(match) == 2 {
+		state.Name = strings.Trim(strings.TrimSpace(match[1]), `"`)
+	}
+	accessByVLAN := map[int]domain.RoleProfile{}
+	var trunk *domain.RoleProfile
+	for i := range profiles {
+		if profiles[i].PortMode == "trunk" {
+			copy := profiles[i]
+			trunk = &copy
+		} else {
+			accessByVLAN[profiles[i].VLANID] = profiles[i]
+		}
+	}
+	for port := 1; port <= 28; port++ {
+		iface := fmt.Sprintf("interface gi%d", port)
+		description := strings.TrimSpace(strings.TrimPrefix(interfaceCommand(configuration, iface, "description "), "description "))
+		description = strings.Trim(description, `"`)
+		setting := domain.PortSetting{SwitchID: switchID, PortIndex: port, DisplayName: description}
+		if interfaceHas(configuration, iface, "switchport mode trunk") && trunk != nil {
+			setting.RoleID = trunk.ID
+		} else {
+			vlanID := 1
+			if command := interfaceCommand(configuration, iface, "switchport access vlan "); command != "" {
+				_, _ = fmt.Sscanf(command, "switchport access vlan %d", &vlanID)
+			}
+			if profile, found := accessByVLAN[vlanID]; found {
+				setting.RoleID = profile.ID
+			}
+		}
+		if setting.DisplayName != "" || setting.RoleID != "" {
+			state.PortSettings = append(state.PortSettings, setting)
+		}
+	}
+	return state
 }
 
 var macTableLine = regexp.MustCompile(`(?im)^\s*(?:[1-9][0-9]{0,3}\s+)?([0-9a-f]{2}(?:(?::|-)[0-9a-f]{2}){5})\s+\S+\s+(?:GigabitEthernet|gi)([1-9]|1[0-9]|2[0-8])\s*$`)
@@ -111,6 +198,15 @@ func (a *SG350SSHConfigurator) Status(ctx context.Context, switchID string) (dom
 	if switchID != "" && switchID != a.config.SwitchID {
 		return domain.ConfigStatus{}, fmt.Errorf("unknown switch %q", switchID)
 	}
+	trustedAlgorithm, trustedFingerprint, _, found, err := a.config.Store.TrustedHostKey(ctx, a.sshAddress())
+	if err != nil {
+		return domain.ConfigStatus{}, err
+	}
+	if found {
+		return domain.ConfigStatus{SwitchID: a.config.SwitchID, Available: true, HostKeyTrusted: true, HostKeyAlgorithm: trustedAlgorithm, HostKeyFingerprint: trustedFingerprint, Message: "SSH-Schlüssel ist bestätigt; die Verbindung wird beim Anwenden geprüft"}, nil
+	}
+	a.sshMu.Lock()
+	defer a.sshMu.Unlock()
 	observed, probeErr := a.probe(ctx)
 	status := domain.ConfigStatus{SwitchID: a.config.SwitchID}
 	if observed != nil {
@@ -120,10 +216,6 @@ func (a *SG350SSHConfigurator) Status(ctx context.Context, switchID string) (dom
 	if probeErr != nil && observed == nil {
 		status.Message = probeErr.Error()
 		return status, nil
-	}
-	_, trustedFingerprint, _, found, err := a.config.Store.TrustedHostKey(ctx, a.sshAddress())
-	if err != nil {
-		return status, err
 	}
 	status.HostKeyTrusted = found && observed != nil && trustedFingerprint == observed.fingerprint
 	if !status.HostKeyTrusted {
@@ -145,7 +237,9 @@ func (a *SG350SSHConfigurator) TrustHostKey(ctx context.Context, trust domain.Ho
 	if trust.SwitchID != a.config.SwitchID {
 		return domain.ConfigStatus{}, fmt.Errorf("unknown switch %q", trust.SwitchID)
 	}
+	a.sshMu.Lock()
 	observed, err := a.probe(ctx)
+	a.sshMu.Unlock()
 	if observed == nil {
 		return domain.ConfigStatus{}, fmt.Errorf("SSH key probe failed: %w", err)
 	}
@@ -175,6 +269,8 @@ func (a *SG350SSHConfigurator) VLANPlan(_ context.Context, request domain.VLANPl
 func (a *SG350SSHConfigurator) DanteHealth(ctx context.Context, request domain.DanteHealthRequest) (domain.DanteHealth, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.sshMu.Lock()
+	defer a.sshMu.Unlock()
 	if request.SwitchID != a.config.SwitchID {
 		return domain.DanteHealth{}, fmt.Errorf("unbekannter Switch %q", request.SwitchID)
 	}
@@ -196,6 +292,59 @@ func (a *SG350SSHConfigurator) DanteHealth(ctx context.Context, request domain.D
 	}
 	health := inspectDanteConfiguration(a.config.SwitchID, request.VLANID, ports, statusOutput)
 	return health, nil
+}
+
+func (a *SG350SSHConfigurator) EventBaselineStatus(ctx context.Context, switchID string, profiles []domain.RoleProfile) (domain.EventBaselineStatus, error) {
+	if switchID != a.config.SwitchID {
+		return domain.EventBaselineStatus{}, fmt.Errorf("unbekannter Switch %q", switchID)
+	}
+	configuration, err := a.runningConfiguration(ctx)
+	if err != nil {
+		return domain.EventBaselineStatus{}, err
+	}
+	return inspectEventBaselineConfiguration(switchID, profiles, configuration), nil
+}
+
+func inspectEventBaselineConfiguration(switchID string, profiles []domain.RoleProfile, configuration string) domain.EventBaselineStatus {
+	status := domain.EventBaselineStatus{SwitchID: switchID, CheckedAt: time.Now().UTC()}
+	missingNetworks := []string{}
+	multicastOK := configHasGlobal(configuration, "bridge multicast filtering") && configHasGlobal(configuration, "ip igmp snooping")
+	for _, profile := range profiles {
+		if profile.VLANID <= 0 {
+			continue
+		}
+		if !configurationHasVLAN(configuration, fmt.Sprint(profile.VLANID)) {
+			missingNetworks = append(missingNetworks, profile.Name)
+		}
+		if profile.PortMode == "access" && profile.Multicast {
+			multicastOK = multicastOK &&
+				configHasGlobal(configuration, fmt.Sprintf("ip igmp snooping vlan %d", profile.VLANID)) &&
+				configHasGlobal(configuration, fmt.Sprintf("ip igmp snooping vlan %d querier", profile.VLANID))
+		}
+	}
+	qosOK := (configHasGlobal(configuration, "qos trust dscp") || configHasGlobal(configuration, "qos advanced-mode trust dscp")) &&
+		configHasGlobal(configuration, "qos map dscp-queue 8 to 2") &&
+		configHasGlobal(configuration, "qos map dscp-queue 46 to 3") &&
+		configHasGlobal(configuration, "qos map dscp-queue 56 to 4")
+	eeeOK := configHasGlobal(configuration, "no eee enable")
+	status.Checks = []domain.EventBaselineCheck{
+		{ID: "networks", Title: "Rollen-Netzwerke", Description: baselineDescription(len(missingNetworks) == 0, "Alle Rollen-Netzwerke sind vorbereitet.", "Fehlend: "+strings.Join(missingNetworks, ", ")), OK: len(missingNetworks) == 0},
+		{ID: "multicast", Title: "Multicast", Description: baselineDescription(multicastOK, "IGMP Snooping und Querier sind für Audio, Licht und Video aktiv.", "IGMP Snooping oder ein Querier fehlt."), OK: multicastOK},
+		{ID: "qos", Title: "Audio-Priorisierung", Description: baselineDescription(qosOK, "Dante-Zeit- und Audiodaten haben passende Prioritäten.", "Die DSCP-Priorisierung ist noch unvollständig."), OK: qosOK},
+		{ID: "eee", Title: "Stabile Links", Description: baselineDescription(eeeOK, "EEE ist global deaktiviert.", "EEE kann noch Latenzschwankungen verursachen."), OK: eeeOK},
+	}
+	status.Healthy = true
+	for _, check := range status.Checks {
+		status.Healthy = status.Healthy && check.OK
+	}
+	return status
+}
+
+func baselineDescription(ok bool, ready, missing string) string {
+	if ok {
+		return ready
+	}
+	return missing
 }
 
 func inspectDanteConfiguration(switchID string, vlanID int, ports []int, configuration string) domain.DanteHealth {
@@ -266,6 +415,8 @@ func configHasGlobal(configuration, wanted string) bool {
 func (a *SG350SSHConfigurator) CaptureSnapshot(ctx context.Context, switchID string) (domain.Snapshot, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.sshMu.Lock()
+	defer a.sshMu.Unlock()
 	if switchID != a.config.SwitchID {
 		return domain.Snapshot{}, fmt.Errorf("unknown switch %q", switchID)
 	}
@@ -295,6 +446,8 @@ func (a *SG350SSHConfigurator) captureWithClient(ctx context.Context, client *ss
 func (a *SG350SSHConfigurator) Apply(ctx context.Context, change domain.ConfigChange) (domain.Snapshot, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.sshMu.Lock()
+	defer a.sshMu.Unlock()
 	if change.SwitchID != a.config.SwitchID {
 		return domain.Snapshot{}, fmt.Errorf("unknown switch %q", change.SwitchID)
 	}
@@ -356,13 +509,56 @@ func (a *SG350SSHConfigurator) Apply(ctx context.Context, change domain.ConfigCh
 	if err != nil {
 		return snapshot, err
 	}
-	if _, err := a.run(client, []string{"terminal datadump", "copy running-config startup-config", "y"}); err != nil {
+	saveOutput, err := a.run(client, []string{"terminal datadump", "copy running-config startup-config", "y"})
+	if err != nil || cliErrorPattern.MatchString(saveOutput) {
 		_ = client.Close()
-		return snapshot, fmt.Errorf("change is active but could not be saved to startup configuration: %w", err)
+		return snapshot, fmt.Errorf("Änderung ist aktiv, konnte aber nicht dauerhaft gespeichert werden: %s", cleanCLIError(saveOutput, err))
 	}
 	_ = client.Close()
+	client, err = a.dial(ctx)
+	if err != nil {
+		return snapshot, fmt.Errorf("Startkonfiguration konnte nach dem Speichern nicht geprüft werden: %w", err)
+	}
+	startup, err := a.run(client, []string{"terminal datadump", "show startup-config"})
+	_ = client.Close()
+	if err != nil || strings.TrimSpace(startup) == "" {
+		return snapshot, fmt.Errorf("Startkonfiguration konnte nach dem Speichern nicht geprüft werden: %w", err)
+	}
+	if err := verifyAppliedConfiguration(change.Commands, startup); err != nil {
+		return snapshot, fmt.Errorf("laufende Änderung ist aktiv, aber nicht vollständig in der Startkonfiguration: %w", err)
+	}
 	a.lastSnapshotID = snapshot.ID
+	a.invalidateConfigurationCache()
 	return snapshot, nil
+}
+
+func (a *SG350SSHConfigurator) SaveStartup(ctx context.Context, switchID string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.sshMu.Lock()
+	defer a.sshMu.Unlock()
+	if switchID != a.config.SwitchID {
+		return fmt.Errorf("unknown switch %q", switchID)
+	}
+	client, err := a.dial(ctx)
+	if err != nil {
+		return err
+	}
+	output, runErr := a.run(client, []string{"terminal datadump", "copy running-config startup-config", "y"})
+	_ = client.Close()
+	if runErr != nil || cliErrorPattern.MatchString(output) {
+		return fmt.Errorf("Startkonfiguration konnte nicht gespeichert werden: %s", cleanCLIError(output, runErr))
+	}
+	client, err = a.dial(ctx)
+	if err != nil {
+		return fmt.Errorf("Startkonfiguration konnte nach dem Speichern nicht geprüft werden: %w", err)
+	}
+	startup, runErr := a.run(client, []string{"terminal datadump", "show startup-config"})
+	_ = client.Close()
+	if runErr != nil || strings.TrimSpace(startup) == "" {
+		return fmt.Errorf("Startkonfiguration konnte nach dem Speichern nicht geprüft werden: %w", runErr)
+	}
+	return nil
 }
 
 func (a *SG350SSHConfigurator) executeRollback(ctx context.Context, commands []string) error {
@@ -400,12 +596,40 @@ func verifyAppliedConfiguration(commands []string, configuration string) error {
 				return fmt.Errorf("Portname wurde nicht übernommen")
 			}
 		case strings.HasPrefix(command, "switchport access vlan ") && currentPort != "":
-			if !interfaceHas(configuration, currentPort, command) {
+			// SG350 omits the default access VLAN 1 from running-config even
+			// after accepting the command. An absent access-VLAN line therefore
+			// verifies VLAN 1, but never any other requested VLAN.
+			configured := interfaceCommand(configuration, currentPort, "switchport access vlan ")
+			if configured != command && !(command == "switchport access vlan 1" && configured == "") {
 				return fmt.Errorf("Portrolle wurde nicht vollständig übernommen")
 			}
 		case strings.HasPrefix(command, "switchport trunk allowed vlan add ") && currentPort != "":
 			if !interfaceVLANMembership(configuration, currentPort, strings.TrimPrefix(command, "switchport trunk allowed vlan add ")) {
 				return fmt.Errorf("Trunk-Rolle wurde nicht vollständig übernommen")
+			}
+		case command == "no spanning-tree disable" && currentPort != "":
+			if interfaceHas(configuration, currentPort, "spanning-tree disable") {
+				return fmt.Errorf("Schleifenschutz wurde nicht eingeschaltet")
+			}
+		case (command == "spanning-tree portfast" || command == "no spanning-tree portfast") && currentPort != "":
+			if !interfaceHas(configuration, currentPort, command) {
+				return fmt.Errorf("Schleifenschutz wurde nicht vollständig übernommen")
+			}
+		case command == "bridge multicast filtering" || command == "ip igmp snooping" || strings.Contains(command, " querier") || strings.HasPrefix(command, "qos map dscp-queue "):
+			if !configHasGlobal(configuration, command) {
+				return fmt.Errorf("Event-Grundeinstellung %q fehlt", command)
+			}
+		case command == "qos trust dscp":
+			if !configHasGlobal(configuration, command) && !configHasGlobal(configuration, "qos advanced-mode trust dscp") {
+				return fmt.Errorf("Audio-Priorisierung wurde nicht übernommen")
+			}
+		case command == "no eee enable" && currentPort == "":
+			if !configHasGlobal(configuration, command) {
+				return fmt.Errorf("EEE wurde nicht global deaktiviert")
+			}
+		case strings.HasPrefix(command, "hostname "):
+			if !configHasGlobal(configuration, command) {
+				return fmt.Errorf("Switch-Name wurde nicht dauerhaft übernommen")
 			}
 		}
 	}
@@ -415,6 +639,8 @@ func verifyAppliedConfiguration(commands []string, configuration string) error {
 func (a *SG350SSHConfigurator) Rollback(ctx context.Context, snapshotID string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.sshMu.Lock()
+	defer a.sshMu.Unlock()
 	rollbackStore, ok := a.config.Store.(RollbackStore)
 	if !ok {
 		return errors.New("persistent rollback storage is unavailable")
@@ -447,6 +673,7 @@ func (a *SG350SSHConfigurator) Rollback(ctx context.Context, snapshotID string) 
 		return fmt.Errorf("rollback is active but could not be saved: %w", err)
 	}
 	_ = client.Close()
+	a.invalidateConfigurationCache()
 	return nil
 }
 
@@ -474,6 +701,39 @@ func buildRollbackCommands(configuration string, applied []string) []string {
 			commands = append(commands, "no ip igmp snooping")
 		case strings.HasPrefix(command, "ip igmp snooping vlan ") && global("no "+command):
 			commands = append(commands, "no "+command)
+		case command == "bridge multicast filtering" && !global(command):
+			commands = append(commands, "no bridge multicast filtering")
+		case strings.Contains(command, " querier") && !global(command):
+			commands = append(commands, "no "+command)
+		case strings.HasPrefix(command, "qos map dscp-queue "):
+			fields := strings.Fields(command)
+			if len(fields) >= 4 {
+				prefix := "qos map dscp-queue " + fields[3] + " to "
+				original := ""
+				for _, line := range strings.Split(strings.ReplaceAll(configuration, "\r", ""), "\n") {
+					if strings.HasPrefix(strings.TrimSpace(line), prefix) {
+						original = strings.TrimSpace(line)
+						break
+					}
+				}
+				if original != command {
+					if original == "" {
+						original = prefix + "1"
+					}
+					commands = append(commands, original)
+				}
+			}
+		case strings.HasPrefix(command, "hostname "):
+			original := ""
+			for _, line := range strings.Split(strings.ReplaceAll(configuration, "\r", ""), "\n") {
+				if strings.HasPrefix(strings.TrimSpace(line), "hostname ") {
+					original = strings.TrimSpace(line)
+					break
+				}
+			}
+			if original != "" && original != command {
+				commands = append(commands, original)
+			}
 		case command == "qos trust dscp" && originalTrust != command:
 			if global("qos advanced-mode trust dscp") {
 				continue
@@ -489,10 +749,20 @@ func buildRollbackCommands(configuration string, applied []string) []string {
 			}
 		case command == "qos trust" && currentPort != "" && !interfaceHas(configuration, currentPort, "qos trust") && !global("qos advanced ports-trusted"):
 			portActions[currentPort].settings = append(portActions[currentPort].settings, "no qos trust")
+		case command == "flowcontrol off" && currentPort != "":
+			original := interfaceCommand(configuration, currentPort, "flowcontrol ")
+			if original != "" && original != command {
+				portActions[currentPort].settings = append(portActions[currentPort].settings, original)
+			}
 		case command == "no eee enable" && currentPort != "" && !interfaceHas(configuration, currentPort, "no eee enable") && !global("no eee enable"):
 			portActions[currentPort].settings = append(portActions[currentPort].settings, "eee enable")
 		case command == "eee enable" && currentPort != "" && !interfaceHas(configuration, currentPort, "eee enable"):
 			portActions[currentPort].settings = append(portActions[currentPort].settings, "no eee enable")
+		case (command == "no spanning-tree disable" || command == "spanning-tree portfast" || command == "no spanning-tree portfast") && currentPort != "":
+			inverse := map[string]string{"no spanning-tree disable": "spanning-tree disable", "spanning-tree portfast": "no spanning-tree portfast", "no spanning-tree portfast": "spanning-tree portfast"}[command]
+			if interfaceHas(configuration, currentPort, inverse) {
+				portActions[currentPort].settings = append(portActions[currentPort].settings, inverse)
+			}
 		case strings.HasPrefix(command, "description ") && currentPort != "":
 			original := interfaceCommand(configuration, currentPort, "description ")
 			if original != command {
@@ -651,7 +921,7 @@ func interfaceHas(configuration, interfaceCommand, wanted string) bool {
 }
 
 var cliErrorPattern = regexp.MustCompile(`(?im)^\s*(% ?(?:bad|wrong|unrecognized|invalid|incomplete|ambiguous|error)|bad command|unknown command)`)
-var allowedConfigCommand = regexp.MustCompile(`^(configure terminal|end|exit|vlan database|vlan [1-9][0-9]{0,3} name [A-Za-z0-9_-]{1,32}|no vlan [1-9][0-9]{0,3}|ip igmp snooping(?: vlan [1-9][0-9]{0,3})?|qos trust(?: dscp)?|(?:no )?eee enable|power inline (?:auto|never)|description "[A-Za-z0-9ÄÖÜäöüß _.,:+()/#-]{1,64}"|description [A-Za-z0-9ÄÖÜäöüß_.,:+()/#-]{1,64}|no description|interface gi(?:[1-9]|1[0-9]|2[0-8])|switchport mode (?:access|trunk)|switchport access vlan [1-9][0-9]{0,3}|switchport trunk allowed vlan (?:add|remove) [1-9][0-9]{0,3})$`)
+var allowedConfigCommand = regexp.MustCompile(`^(configure terminal|end|exit|hostname [A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?|vlan database|vlan [1-9][0-9]{0,3} name [A-Za-z0-9_-]{1,32}|no vlan [1-9][0-9]{0,3}|(?:no )?bridge multicast filtering|(?:no )?ip igmp snooping(?: vlan [1-9][0-9]{0,3}(?: querier(?: version [23])?)?)?|qos trust(?: dscp)?|qos map dscp-queue (?:8|46|56) to [1-4]|flowcontrol (?:off|on)|(?:no )?eee enable|(?:no )?spanning-tree disable|(?:no )?spanning-tree portfast|power inline (?:auto|never)|description "[A-Za-z0-9ÄÖÜäöüß _.,:+()/#-]{1,64}"|description [A-Za-z0-9ÄÖÜäöüß_.,:+()/#-]{1,64}|no description|interface gi(?:[1-9]|1[0-9]|2[0-8])|switchport mode (?:access|trunk)|switchport access vlan [1-9][0-9]{0,3}|switchport trunk allowed vlan (?:add|remove) [1-9][0-9]{0,3})$`)
 
 func validateConfigCommands(commands []string) error {
 	if len(commands) == 0 || len(commands) > 512 {
@@ -777,7 +1047,7 @@ func (a *SG350SSHConfigurator) run(client *ssh.Client, commands []string) (strin
 			continue
 		}
 		timeout := 12 * time.Second
-		if strings.HasPrefix(command, "show running-config") || command == "y" {
+		if strings.HasPrefix(command, "show running-config") || strings.HasPrefix(command, "show startup-config") || command == "y" {
 			timeout = 25 * time.Second
 		}
 		if err := waitForCLIPrompt(output, start, timeout); err != nil {
