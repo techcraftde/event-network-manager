@@ -22,6 +22,8 @@ Snapshots in SQLite.
   Prioritätsqueues, Port-Trust, deaktiviertem EEE und deaktiviertem Flow Control
 - Lighting-Profil für MA-Net2/3, Art-Net und sACN mit Multicast-Optimierung,
   Querier, EEE-Abschaltung und Warnung bei Links unter 1 Gbit/s
+- expliziter Lighting-IGMP-Schalter zwischen MA-Net3/sACN-Betrieb und einem
+  grandMA2-Kompatibilitätsmodus ohne IGMP Snooping auf dem Lighting-Netz
 - geführtes Event-Grundsetup für Rollen-Netzwerke, IGMP Snooping/Querier,
   Dante-DSCP-Prioritäten und global deaktiviertes EEE
 - direkte Portanwendung ohne Vorschau- oder Mehrfachbestätigung, sichtbarer
@@ -33,6 +35,8 @@ Snapshots in SQLite.
 - Switch als Betriebsquelle: Scan liest Hostname, Portbeschreibungen und Rollen
   direkt aus der laufenden Switch-Konfiguration; ein neuer Mac rekonstruiert die
   Ansicht ohne lokale Port-Zuordnungen
+- physische Zwei-Reihen-Portanordnung inklusive Uplinkblock direkt in jedem
+  Switch-Knoten der Topologie
 - SSH-Host-Key-Pinning; Passwörter bleiben im macOS-Schlüsselbund
 - lokale HTTP-API als Grenze für einen späteren Proxmox-Remote-Agent
 

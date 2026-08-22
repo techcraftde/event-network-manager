@@ -18,6 +18,9 @@ Alle wesentlichen Änderungen an Event Network Manager werden hier dokumentiert.
 - Dauerhafte Switch-Umbenennung über den echten Cisco-Hostname
 - Verifikation jeder Änderung zusätzlich gegen die gespeicherte Startup Config
 - Gewerkhinweise für Yamaha-Control/Dante, MA-Net2/3, Art-Net und sACN
+- Funktionaler IGMP-Schalter für Lighting: MA-Net3/sACN oder grandMA2-Modus
+  ohne IGMP Snooping auf VLAN 3
+- Physische Portreihen und separater Uplinkblock auch in der Topologieansicht
 
 ### Behoben
 

@@ -93,6 +93,28 @@ func TestBuildRolePlanConfiguresMultiplePortsAndLoopProtection(t *testing.T) {
 	}
 }
 
+func TestLightingCompatibilityModeDisablesIGMPForGrandMA2(t *testing.T) {
+	profiles := domain.DefaultRoleProfiles()
+	for index := range profiles {
+		if profiles[index].ID == "lighting" {
+			profiles[index].Multicast = false
+		}
+	}
+	plan, err := BuildRolePlan(domain.RolePlanRequest{SwitchID: "switch-1", Ports: []domain.RolePortRequest{{PortIndex: 3, DisplayName: "grandMA2", RoleID: "lighting"}}}, profiles, []domain.VLAN{{ID: 3}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands := strings.Join(plan.Commands, "\n")
+	if !strings.Contains(commands, "no ip igmp snooping vlan 3") {
+		t.Fatalf("grandMA2 compatibility command missing:\n%s", commands)
+	}
+	configuration := "ip igmp snooping vlan 3\ninterface GigabitEthernet3\n switchport access vlan 3\n!\n"
+	rollback := strings.Join(buildRollbackCommands(configuration, plan.Commands), "\n")
+	if !strings.Contains(rollback, "ip igmp snooping vlan 3") {
+		t.Fatalf("rollback does not restore IGMP:\n%s", rollback)
+	}
+}
+
 func TestBuildAndInspectEventBaseline(t *testing.T) {
 	profiles := domain.DefaultRoleProfiles()
 	plan, err := BuildEventBaselinePlan("switch-1", profiles, nil)

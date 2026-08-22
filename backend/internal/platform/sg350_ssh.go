@@ -619,6 +619,11 @@ func verifyAppliedConfiguration(commands []string, configuration string) error {
 			if !configHasGlobal(configuration, command) {
 				return fmt.Errorf("Event-Grundeinstellung %q fehlt", command)
 			}
+		case strings.HasPrefix(command, "no ip igmp snooping vlan "):
+			positive := strings.TrimPrefix(command, "no ")
+			if !configHasGlobal(configuration, command) && configHasGlobal(configuration, positive) {
+				return fmt.Errorf("IGMP-Kompatibilitätsmodus wurde nicht übernommen")
+			}
 		case command == "qos trust dscp":
 			if !configHasGlobal(configuration, command) && !configHasGlobal(configuration, "qos advanced-mode trust dscp") {
 				return fmt.Errorf("Audio-Priorisierung wurde nicht übernommen")
@@ -701,6 +706,11 @@ func buildRollbackCommands(configuration string, applied []string) []string {
 			commands = append(commands, "no ip igmp snooping")
 		case strings.HasPrefix(command, "ip igmp snooping vlan ") && global("no "+command):
 			commands = append(commands, "no "+command)
+		case strings.HasPrefix(command, "no ip igmp snooping vlan "):
+			original := strings.TrimPrefix(command, "no ")
+			if global(original) {
+				commands = append(commands, original)
+			}
 		case command == "bridge multicast filtering" && !global(command):
 			commands = append(commands, "no bridge multicast filtering")
 		case strings.Contains(command, " querier") && !global(command):

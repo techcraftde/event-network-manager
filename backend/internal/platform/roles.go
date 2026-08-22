@@ -88,11 +88,14 @@ func BuildRolePlan(request domain.RolePlanRequest, profiles []domain.RoleProfile
 		commands = append(commands, "vlan database", fmt.Sprintf("vlan %d name %s", id, name), "exit")
 		missing = append(missing, required[id].Name)
 	}
-	needsMulticast, needsQoS := map[int]bool{}, false
+	needsMulticast, disablesMulticast, needsQoS := map[int]bool{}, map[int]bool{}, false
 	for _, port := range ports {
 		profile := profileByID[port.RoleID]
 		if profile.Multicast && profile.VLANID > 0 {
 			needsMulticast[profile.VLANID] = true
+		}
+		if profile.ID == "lighting" && !profile.Multicast && profile.VLANID > 0 {
+			disablesMulticast[profile.VLANID] = true
 		}
 		needsQoS = needsQoS || profile.DanteQoS
 	}
@@ -109,6 +112,16 @@ func BuildRolePlan(request domain.RolePlanRequest, profiles []domain.RoleProfile
 				fmt.Sprintf("ip igmp snooping vlan %d querier version 3", id),
 				fmt.Sprintf("ip igmp snooping vlan %d querier", id),
 			)
+		}
+	}
+	if len(disablesMulticast) > 0 {
+		ids := make([]int, 0, len(disablesMulticast))
+		for id := range disablesMulticast {
+			ids = append(ids, id)
+		}
+		sort.Ints(ids)
+		for _, id := range ids {
+			commands = append(commands, fmt.Sprintf("no ip igmp snooping vlan %d", id))
 		}
 	}
 	if needsQoS {
