@@ -13,6 +13,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -595,6 +596,19 @@ func verifyAppliedConfiguration(commands []string, configuration string) error {
 			if !interfaceHas(configuration, currentPort, command) {
 				return fmt.Errorf("Portname wurde nicht übernommen")
 			}
+		case command == "no description" && currentPort != "":
+			if interfaceCommand(configuration, currentPort, "description ") != "" {
+				return fmt.Errorf("Portname wurde nicht zurückgesetzt")
+			}
+		case command == "switchport mode trunk" && currentPort != "":
+			if !interfaceHas(configuration, currentPort, command) {
+				return fmt.Errorf("Trunk-Modus wurde nicht übernommen")
+			}
+		case command == "switchport mode access" && currentPort != "":
+			configured := interfaceCommand(configuration, currentPort, "switchport mode ")
+			if configured != "" && configured != command {
+				return fmt.Errorf("Access-Modus wurde nicht übernommen")
+			}
 		case strings.HasPrefix(command, "switchport access vlan ") && currentPort != "":
 			// SG350 omits the default access VLAN 1 from running-config even
 			// after accepting the command. An absent access-VLAN line therefore
@@ -607,6 +621,19 @@ func verifyAppliedConfiguration(commands []string, configuration string) error {
 			if !interfaceVLANMembership(configuration, currentPort, strings.TrimPrefix(command, "switchport trunk allowed vlan add ")) {
 				return fmt.Errorf("Trunk-Rolle wurde nicht vollständig übernommen")
 			}
+		case command == "switchport trunk allowed vlan 1-4,4000" && currentPort != "":
+			if !interfaceVLANSetEquals(configuration, currentPort, []int{1, 2, 3, 4, 4000}) {
+				return fmt.Errorf("ME-Trunk-Netzwerke wurden nicht vollständig übernommen")
+			}
+		case (strings.HasPrefix(command, "switchport general pvid ") || strings.HasPrefix(command, "switchport trunk native vlan ")) && currentPort != "":
+			prefix := strings.TrimSuffix(command, strings.Fields(command)[len(strings.Fields(command))-1])
+			if interfaceCommand(configuration, currentPort, prefix) != command {
+				return fmt.Errorf("Management-Netz am Trunk wurde nicht übernommen")
+			}
+		case command == "spanning-tree disable" && currentPort != "":
+			if !interfaceHas(configuration, currentPort, command) {
+				return fmt.Errorf("Referenz-Schleifenschutzeinstellung wurde nicht übernommen")
+			}
 		case command == "no spanning-tree disable" && currentPort != "":
 			if interfaceHas(configuration, currentPort, "spanning-tree disable") {
 				return fmt.Errorf("Schleifenschutz wurde nicht eingeschaltet")
@@ -615,7 +642,7 @@ func verifyAppliedConfiguration(commands []string, configuration string) error {
 			if !interfaceHas(configuration, currentPort, command) {
 				return fmt.Errorf("Schleifenschutz wurde nicht vollständig übernommen")
 			}
-		case command == "bridge multicast filtering" || command == "ip igmp snooping" || strings.Contains(command, " querier") || strings.HasPrefix(command, "qos map dscp-queue "):
+		case command == "bridge multicast filtering" || command == "ip igmp snooping" || strings.HasPrefix(command, "qos map dscp-queue ") || command == "voice vlan state disabled":
 			if !configHasGlobal(configuration, command) {
 				return fmt.Errorf("Event-Grundeinstellung %q fehlt", command)
 			}
@@ -623,6 +650,15 @@ func verifyAppliedConfiguration(commands []string, configuration string) error {
 			positive := strings.TrimPrefix(command, "no ")
 			if !configHasGlobal(configuration, command) && configHasGlobal(configuration, positive) {
 				return fmt.Errorf("IGMP-Kompatibilitätsmodus wurde nicht übernommen")
+			}
+		case command == "no ip igmp snooping" || command == "no bridge multicast filtering":
+			positive := strings.TrimPrefix(command, "no ")
+			if !configHasGlobal(configuration, command) && configHasGlobal(configuration, positive) {
+				return fmt.Errorf("Multicast-Abschaltung wurde nicht übernommen")
+			}
+		case strings.Contains(command, " querier"):
+			if !configHasGlobal(configuration, command) {
+				return fmt.Errorf("Event-Grundeinstellung %q fehlt", command)
 			}
 		case command == "qos trust dscp":
 			if !configHasGlobal(configuration, command) && !configHasGlobal(configuration, "qos advanced-mode trust dscp") {
@@ -704,6 +740,8 @@ func buildRollbackCommands(configuration string, applied []string) []string {
 			}
 		case command == "ip igmp snooping" && global("no ip igmp snooping"):
 			commands = append(commands, "no ip igmp snooping")
+		case command == "no ip igmp snooping" && global("ip igmp snooping"):
+			commands = append(commands, "ip igmp snooping")
 		case strings.HasPrefix(command, "ip igmp snooping vlan ") && global("no "+command):
 			commands = append(commands, "no "+command)
 		case strings.HasPrefix(command, "no ip igmp snooping vlan "):
@@ -713,6 +751,19 @@ func buildRollbackCommands(configuration string, applied []string) []string {
 			}
 		case command == "bridge multicast filtering" && !global(command):
 			commands = append(commands, "no bridge multicast filtering")
+		case command == "no bridge multicast filtering" && global("bridge multicast filtering"):
+			commands = append(commands, "bridge multicast filtering")
+		case command == "voice vlan state disabled":
+			original := ""
+			for _, line := range strings.Split(strings.ReplaceAll(configuration, "\r", ""), "\n") {
+				if strings.HasPrefix(strings.TrimSpace(line), "voice vlan state ") {
+					original = strings.TrimSpace(line)
+					break
+				}
+			}
+			if original != "" && original != command {
+				commands = append(commands, original)
+			}
 		case strings.Contains(command, " querier") && !global(command):
 			commands = append(commands, "no "+command)
 		case strings.HasPrefix(command, "qos map dscp-queue "):
@@ -764,13 +815,15 @@ func buildRollbackCommands(configuration string, applied []string) []string {
 			if original != "" && original != command {
 				portActions[currentPort].settings = append(portActions[currentPort].settings, original)
 			}
+		case command == "no eee enable" && currentPort == "" && !global("no eee enable"):
+			commands = append(commands, "eee enable")
 		case command == "no eee enable" && currentPort != "" && !interfaceHas(configuration, currentPort, "no eee enable") && !global("no eee enable"):
 			portActions[currentPort].settings = append(portActions[currentPort].settings, "eee enable")
 		case command == "eee enable" && currentPort != "" && !interfaceHas(configuration, currentPort, "eee enable"):
 			portActions[currentPort].settings = append(portActions[currentPort].settings, "no eee enable")
-		case (command == "no spanning-tree disable" || command == "spanning-tree portfast" || command == "no spanning-tree portfast") && currentPort != "":
-			inverse := map[string]string{"no spanning-tree disable": "spanning-tree disable", "spanning-tree portfast": "no spanning-tree portfast", "no spanning-tree portfast": "spanning-tree portfast"}[command]
-			if interfaceHas(configuration, currentPort, inverse) {
+		case (command == "spanning-tree disable" || command == "no spanning-tree disable" || command == "spanning-tree portfast" || command == "no spanning-tree portfast") && currentPort != "":
+			inverse := map[string]string{"spanning-tree disable": "no spanning-tree disable", "no spanning-tree disable": "spanning-tree disable", "spanning-tree portfast": "no spanning-tree portfast", "no spanning-tree portfast": "spanning-tree portfast"}[command]
+			if interfaceHas(configuration, currentPort, inverse) || (command == "spanning-tree disable" && !interfaceHas(configuration, currentPort, command)) {
 				portActions[currentPort].settings = append(portActions[currentPort].settings, inverse)
 			}
 		case strings.HasPrefix(command, "description ") && currentPort != "":
@@ -779,6 +832,10 @@ func buildRollbackCommands(configuration string, applied []string) []string {
 				if original == "" {
 					original = "no description"
 				}
+				portActions[currentPort].settings = append(portActions[currentPort].settings, original)
+			}
+		case command == "no description" && currentPort != "":
+			if original := interfaceCommand(configuration, currentPort, "description "); original != "" {
 				portActions[currentPort].settings = append(portActions[currentPort].settings, original)
 			}
 		case (command == "power inline auto" || command == "power inline never") && currentPort != "":
@@ -801,6 +858,24 @@ func buildRollbackCommands(configuration string, applied []string) []string {
 			vlan := strings.TrimPrefix(command, "switchport trunk allowed vlan add ")
 			if !interfaceVLANMembership(configuration, currentPort, vlan) {
 				portActions[currentPort].membership = append(portActions[currentPort].membership, "switchport trunk allowed vlan remove "+vlan)
+			}
+		case command == "switchport trunk allowed vlan 1-4,4000" && currentPort != "":
+			original := interfaceCommand(configuration, currentPort, "switchport trunk allowed vlan ")
+			if original == "" {
+				original = "switchport trunk allowed vlan 1-4094"
+			}
+			if original != command {
+				portActions[currentPort].membership = append(portActions[currentPort].membership, original)
+			}
+		case (strings.HasPrefix(command, "switchport general pvid ") || strings.HasPrefix(command, "switchport trunk native vlan ")) && currentPort != "":
+			fields := strings.Fields(command)
+			prefix := strings.Join(fields[:len(fields)-1], " ") + " "
+			original := interfaceCommand(configuration, currentPort, prefix)
+			if original == "" {
+				original = prefix + "1"
+			}
+			if original != command {
+				portActions[currentPort].membership = append(portActions[currentPort].membership, original)
 			}
 		case strings.HasPrefix(command, "switchport mode ") && currentPort != "":
 			original := interfaceCommand(configuration, currentPort, "switchport mode ")
@@ -898,17 +973,47 @@ func interfaceNamesEqual(left, right string) bool {
 }
 
 func interfaceVLANMembership(configuration, interfaceCommand, vlan string) bool {
+	wanted, err := strconv.Atoi(vlan)
+	if err != nil {
+		return false
+	}
 	for _, line := range interfaceLines(configuration, interfaceCommand) {
 		if strings.HasPrefix(line, "switchport trunk allowed vlan") {
-			fields := regexp.MustCompile(`[^0-9-]+`).Split(line, -1)
-			for _, field := range fields {
-				if field == vlan {
+			value := strings.TrimSpace(strings.TrimPrefix(line, "switchport trunk allowed vlan"))
+			value = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(value, "add"), "remove"))
+			for _, id := range parseVLANRange(value) {
+				if id == wanted {
 					return true
 				}
 			}
 		}
 	}
 	return false
+}
+
+func interfaceVLANSetEquals(configuration, interfaceCommand string, wanted []int) bool {
+	actual := map[int]bool{}
+	found := false
+	for _, line := range interfaceLines(configuration, interfaceCommand) {
+		if !strings.HasPrefix(line, "switchport trunk allowed vlan") {
+			continue
+		}
+		found = true
+		value := strings.TrimSpace(strings.TrimPrefix(line, "switchport trunk allowed vlan"))
+		value = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(value, "add"), "remove"))
+		for _, id := range parseVLANRange(value) {
+			actual[id] = true
+		}
+	}
+	if !found || len(actual) != len(wanted) {
+		return false
+	}
+	for _, id := range wanted {
+		if !actual[id] {
+			return false
+		}
+	}
+	return true
 }
 
 func interfaceHas(configuration, interfaceCommand, wanted string) bool {
@@ -931,7 +1036,7 @@ func interfaceHas(configuration, interfaceCommand, wanted string) bool {
 }
 
 var cliErrorPattern = regexp.MustCompile(`(?im)^\s*(% ?(?:bad|wrong|unrecognized|invalid|incomplete|ambiguous|error)|bad command|unknown command)`)
-var allowedConfigCommand = regexp.MustCompile(`^(configure terminal|end|exit|hostname [A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?|vlan database|vlan [1-9][0-9]{0,3} name [A-Za-z0-9_-]{1,32}|no vlan [1-9][0-9]{0,3}|(?:no )?bridge multicast filtering|(?:no )?ip igmp snooping(?: vlan [1-9][0-9]{0,3}(?: querier(?: version [23])?)?)?|qos trust(?: dscp)?|qos map dscp-queue (?:8|46|56) to [1-4]|flowcontrol (?:off|on)|(?:no )?eee enable|(?:no )?spanning-tree disable|(?:no )?spanning-tree portfast|power inline (?:auto|never)|description "[A-Za-z0-9ÄÖÜäöüß _.,:+()/#-]{1,64}"|description [A-Za-z0-9ÄÖÜäöüß_.,:+()/#-]{1,64}|no description|interface gi(?:[1-9]|1[0-9]|2[0-8])|switchport mode (?:access|trunk)|switchport access vlan [1-9][0-9]{0,3}|switchport trunk allowed vlan (?:add|remove) [1-9][0-9]{0,3})$`)
+var allowedConfigCommand = regexp.MustCompile(`^(configure terminal|end|exit|hostname [A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?|vlan database|vlan [1-9][0-9]{0,3} name [A-Za-z0-9_-]{1,32}|no vlan [1-9][0-9]{0,3}|voice vlan state disabled|(?:no )?bridge multicast filtering|(?:no )?ip igmp snooping(?: vlan [1-9][0-9]{0,3}(?: querier(?: version [23])?)?)?|qos trust(?: dscp)?|qos map dscp-queue (?:[0-9]|[1-5][0-9]|6[0-3]) to [1-4]|flowcontrol (?:off|on)|(?:no )?eee enable|(?:no )?spanning-tree disable|(?:no )?spanning-tree portfast|power inline (?:auto|never)|description "[A-Za-z0-9ÄÖÜäöüß _.,:+()/#-]{1,64}"|description [A-Za-z0-9ÄÖÜäöüß_.,:+()/#-]{1,64}|no description|interface gi(?:[1-9]|1[0-9]|2[0-8])|switchport mode (?:access|trunk)|switchport access vlan [1-9][0-9]{0,3}|switchport general pvid [1-9][0-9]{0,3}|switchport trunk native vlan [1-9][0-9]{0,3}|switchport trunk allowed vlan 1-4,4000|switchport trunk allowed vlan (?:add|remove) [1-9][0-9]{0,3})$`)
 
 func validateConfigCommands(commands []string) error {
 	if len(commands) == 0 || len(commands) > 512 {

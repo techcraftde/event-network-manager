@@ -69,6 +69,15 @@ func TestEventBaselineEndpoints(t *testing.T) {
 	}
 }
 
+func TestReferenceResetEndpointBuildsPlanServerSide(t *testing.T) {
+	r := httptest.NewRequest("POST", "/api/config/apply-reference-reset", strings.NewReader(`{"switchId":"foh","commands":["hostname attacker"]}`))
+	w := httptest.NewRecorder()
+	NewHandler(platform.NewMockServices()).ServeHTTP(w, r)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"switchId":"foh"`) || !strings.Contains(w.Body.String(), `"sizeBytes":`) {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestSwitchRenameDecoratesTopology(t *testing.T) {
 	h := NewHandler(platform.NewMockServices())
 	w := httptest.NewRecorder()

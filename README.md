@@ -26,6 +26,10 @@ Snapshots in SQLite.
   grandMA2-Kompatibilitätsmodus ohne IGMP Snooping auf dem Lighting-Netz
 - geführtes Event-Grundsetup für Rollen-Netzwerke, IGMP Snooping/Querier,
   Dante-DSCP-Prioritäten und global deaktiviertes EEE
+- eigener, abgesicherter ME-Referenzreset für SG350-28(P): festes Portschema
+  1–24, Management-Trunks 25–28, vollständige IGMP-Abschaltung und exakte
+  DSCP-Queue-Zuordnung; aktuelle Management-IP, Hostname, Benutzer, Schlüssel
+  und Zertifikate bleiben erhalten
 - direkte Portanwendung ohne Vorschau- oder Mehrfachbestätigung, sichtbarer
   Acht-Schritt-Fortschritt und automatisches Neuladen vom echten Switch
 - eigener Schalter oben rechts zum Lesen, Speichern und Prüfen der Startup Config

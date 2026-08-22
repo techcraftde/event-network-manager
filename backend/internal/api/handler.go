@@ -37,11 +37,38 @@ func NewHandler(services platform.Services) http.Handler {
 	mux.HandleFunc("GET /api/config/event-baseline", h.eventBaselineStatus)
 	mux.HandleFunc("POST /api/config/event-baseline-plan", h.eventBaselinePlan)
 	mux.HandleFunc("POST /api/config/apply-event-baseline", h.applyEventBaseline)
+	mux.HandleFunc("POST /api/config/apply-reference-reset", h.applyReferenceReset)
 	mux.HandleFunc("POST /api/config/dante-health", h.danteHealth)
 	mux.HandleFunc("POST /api/config/save-startup", h.saveStartup)
 	mux.HandleFunc("POST /api/config/apply", h.apply)
 	mux.HandleFunc("POST /api/config/rollback/{id}", h.rollback)
 	return cors(mux)
+}
+func (h *Handler) applyReferenceReset(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		SwitchID string `json:"switchId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || strings.TrimSpace(request.SwitchID) == "" {
+		write(w, 400, map[string]string{"error": "ungültige Anfrage"})
+		return
+	}
+	planner, ok := h.services.Configurator.(platform.ReferenceResetPlanner)
+	if !ok {
+		write(w, 503, map[string]string{"error": "ME-Standard-Wiederherstellung ist in diesem Betriebsmodus nicht verfügbar"})
+		return
+	}
+	// Always rebuild from the live running configuration immediately before the
+	// change. This proves that a static management address exists and prevents a
+	// browser from supplying arbitrary CLI commands.
+	plan, err := planner.ReferenceResetPlan(r.Context(), request.SwitchID)
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	snapshot, err := h.services.Configurator.Apply(r.Context(), domain.ConfigChange{
+		SwitchID: plan.SwitchID, Description: plan.Description, Commands: plan.Commands,
+	})
+	respond(w, snapshot, err)
 }
 func (h *Handler) eventBaselineStatus(w http.ResponseWriter, r *http.Request) {
 	profiles, err := h.services.Preferences.RoleProfiles(r.Context())

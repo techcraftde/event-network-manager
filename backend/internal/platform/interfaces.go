@@ -31,6 +31,14 @@ type Configurator interface {
 	Apply(context.Context, domain.ConfigChange) (domain.Snapshot, error)
 	Rollback(context.Context, string) error
 }
+
+// ReferenceResetPlanner is intentionally separate from Configurator so future
+// adapters can opt in only when they can read the live configuration first.
+// The plan must be built server-side; accepting reset commands from a client
+// would undermine the SG350 command allowlist.
+type ReferenceResetPlanner interface {
+	ReferenceResetPlan(context.Context, string) (domain.ConfigPlan, error)
+}
 type SnapshotStore interface {
 	Save(context.Context, domain.Snapshot) error
 	List(context.Context, string) ([]domain.Snapshot, error)

@@ -2,6 +2,36 @@
 
 Alle wesentlichen Änderungen an Event Network Manager werden hier dokumentiert.
 
+## 0.5.0 – 2026-08-22
+
+### Hinzugefügt
+
+- Eigener Button „ME-Standard wiederherstellen“ im Event-Grundsetup
+- Sanitierter Reset anhand der bereitgestellten SG350-28-Referenz mit dem
+  festen Portschema für VLAN 1–4 und Management-Trunks auf Port 25–28
+- Exakte DSCP-Zuordnung der Referenz mit Dante-Prioritäten 8/46/56
+- Fortschrittsanzeige, automatischer Snapshot sowie Running-/Startup-Prüfung
+
+### Sicherheit
+
+- Reset-Plan wird ausschließlich serverseitig aus der unmittelbar gelesenen
+  Running Config erzeugt; Browserbefehle werden ignoriert
+- Vorgang wird verweigert, wenn die statische Management-IP nicht sicher
+  erkannt werden kann
+- Management-IP, Switchname, Benutzer, Passwörter, SNMP-Zugänge, SSH-Schlüssel
+  und Zertifikate werden weder verändert noch aus der Referenz übernommen
+- IGMP Snooping, alle Referenz-Querier und Multicast-Filterung werden explizit
+  ausgeschaltet; zusätzliche VLAN-Definitionen bleiben als Schutz möglicher
+  weiterer Management-Schnittstellen erhalten
+
+### Geprüft
+
+- Vollständiger Reset-Plan bleibt unter dem SG350-Limit von 512 Kommandos
+- Unit-Tests für Portschema, Management-IP-Schutz, CLI-Allowlist, Verifikation
+  und inversen Rollback
+- API-Integrationstest stellt sicher, dass mitgesendete Client-Kommandos nicht
+  ausgeführt werden
+
 ## 0.4.1 – 2026-08-22
 
 ### Hinzugefügt

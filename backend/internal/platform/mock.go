@@ -50,6 +50,10 @@ func (m *MockAdapter) EventBaselineStatus(_ context.Context, switchID string, _ 
 	}
 	return domain.EventBaselineStatus{SwitchID: switchID, CheckedAt: time.Now(), Healthy: true, Checks: checks}, nil
 }
+func (m *MockAdapter) ReferenceResetPlan(_ context.Context, switchID string) (domain.ConfigPlan, error) {
+	configuration := "interface vlan 4000\n ip address 192.168.50.2 255.255.255.0\n exit\n"
+	return BuildReferenceResetPlan(switchID, configuration)
+}
 func (m *MockAdapter) CaptureSnapshot(ctx context.Context, switchID string) (domain.Snapshot, error) {
 	s := domain.Snapshot{ID: fmt.Sprintf("snap-%d", time.Now().UnixNano()), SwitchID: switchID, CreatedAt: time.Now(), Configuration: "! mock running-config", SizeBytes: len("! mock running-config")}
 	return s, m.Save(ctx, s)

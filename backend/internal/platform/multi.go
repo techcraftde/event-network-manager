@@ -145,6 +145,17 @@ func (m *MultiAdapter) EventBaselineStatus(ctx context.Context, switchID string,
 	}
 	return target.EventBaselineStatus(ctx, switchID, profiles)
 }
+func (m *MultiAdapter) ReferenceResetPlan(ctx context.Context, switchID string) (domain.ConfigPlan, error) {
+	target, err := m.target(ctx, switchID)
+	if err != nil {
+		return domain.ConfigPlan{}, err
+	}
+	planner, ok := target.(ReferenceResetPlanner)
+	if !ok {
+		return domain.ConfigPlan{}, errors.New("ME-Standard-Wiederherstellung ist für diesen Switch nicht verfügbar")
+	}
+	return planner.ReferenceResetPlan(ctx, switchID)
+}
 func (m *MultiAdapter) CaptureSnapshot(ctx context.Context, switchID string) (domain.Snapshot, error) {
 	target, err := m.target(ctx, switchID)
 	if err != nil {

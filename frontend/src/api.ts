@@ -22,3 +22,4 @@ export function getAlarms():Promise<AlarmReport>{return json('/api/alarms')}
 export function getEventBaseline(switchId:string):Promise<EventBaselineStatus>{return json(`/api/config/event-baseline?switchId=${encodeURIComponent(switchId)}`)}
 export function createEventBaselinePlan(switchId:string):Promise<ConfigPlan>{return json('/api/config/event-baseline-plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({switchId})})}
 export function applyEventBaseline(plan:ConfigPlan):Promise<Snapshot>{return json('/api/config/apply-event-baseline',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan})})}
+export function applyReferenceReset(switchId:string):Promise<Snapshot>{return json('/api/config/apply-reference-reset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({switchId})})}
