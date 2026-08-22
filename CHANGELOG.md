@@ -2,6 +2,21 @@
 
 Alle wesentlichen Änderungen an Event Network Manager werden hier dokumentiert.
 
+## 0.4.1 – 2026-08-22
+
+### Hinzugefügt
+
+- Sichtbare Switch-Auswahl in „Ports & Rollen“ mit Name und IP-Adresse
+- Ein Klick auf einen Switch-Knoten in der Topologie öffnet direkt dessen
+  Port- und Rollenkonfiguration
+- Deutlicher „Ports konfigurieren“-Hinweis auf jedem Topologie-Switch
+
+### Geprüft
+
+- Topologie-Klick auf den realen SG350 öffnet dessen Portansicht
+- Wechsel zwischen drei Switches per Topologie und Dropdown lädt jeweils den
+  richtigen Switch und dessen Ports
+
 ## 0.4.0 – 2026-08-22
 
 ### Hinzugefügt
