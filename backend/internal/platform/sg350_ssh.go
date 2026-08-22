@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -34,6 +36,9 @@ type SG350SSHConfigurator struct {
 	config         SG350SSHConfig
 	mu             sync.Mutex
 	lastSnapshotID string
+	inventoryMu    sync.Mutex
+	inventoryAt    time.Time
+	inventory      []domain.ConnectedDevice
 }
 
 type observedHostKey struct {
@@ -46,6 +51,60 @@ func NewSG350SSHConfigurator(config SG350SSHConfig) (*SG350SSHConfigurator, erro
 		return nil, errors.New("complete SSH configuration and persistent store are required")
 	}
 	return &SG350SSHConfigurator{config: config}, nil
+}
+
+func (a *SG350SSHConfigurator) ConnectedDevices(ctx context.Context, switchID string) ([]domain.ConnectedDevice, error) {
+	if switchID != "" && switchID != a.config.SwitchID {
+		return nil, fmt.Errorf("unknown switch %q", switchID)
+	}
+	a.inventoryMu.Lock()
+	defer a.inventoryMu.Unlock()
+	if time.Since(a.inventoryAt) < 30*time.Second {
+		return append([]domain.ConnectedDevice(nil), a.inventory...), nil
+	}
+	client, err := a.dial(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+	output, err := a.run(client, []string{"terminal datadump", "show mac address-table", "show arp"})
+	if err != nil {
+		return nil, err
+	}
+	a.inventory = parseConnectedDevices(a.config.SwitchID, output)
+	a.inventoryAt = time.Now()
+	return append([]domain.ConnectedDevice(nil), a.inventory...), nil
+}
+
+var macTableLine = regexp.MustCompile(`(?im)^\s*(?:[1-9][0-9]{0,3}\s+)?([0-9a-f]{2}(?:(?::|-)[0-9a-f]{2}){5})\s+\S+\s+(?:GigabitEthernet|gi)([1-9]|1[0-9]|2[0-8])\s*$`)
+var arpLine = regexp.MustCompile(`(?im)^\s*([0-9]{1,3}(?:\.[0-9]{1,3}){3})\s+([0-9a-f]{2}(?:(?::|-)[0-9a-f]{2}){5})(?:\s|$)`)
+
+func parseConnectedDevices(switchID, output string) []domain.ConnectedDevice {
+	ips := map[string]string{}
+	for _, match := range arpLine.FindAllStringSubmatch(output, -1) {
+		ips[normalizeMAC(match[2])] = match[1]
+	}
+	seen := map[string]bool{}
+	result := []domain.ConnectedDevice{}
+	for _, match := range macTableLine.FindAllStringSubmatch(output, -1) {
+		mac := normalizeMAC(match[1])
+		if seen[mac] {
+			continue
+		}
+		seen[mac] = true
+		port := 0
+		fmt.Sscan(match[2], &port)
+		name := ips[mac]
+		if name == "" {
+			name = mac
+		}
+		result = append(result, domain.ConnectedDevice{ID: "endpoint-" + safeID(mac), SwitchID: switchID, PortIndex: port, Name: name, IPAddress: ips[mac], MACAddress: mac, Protocol: "MAC/ARP"})
+	}
+	return result
+}
+func normalizeMAC(value string) string {
+	value = strings.ToLower(strings.ReplaceAll(value, "-", ":"))
+	return value
 }
 
 func (a *SG350SSHConfigurator) Status(ctx context.Context, switchID string) (domain.ConfigStatus, error) {
@@ -149,7 +208,7 @@ func inspectDanteConfiguration(switchID string, vlanID int, ports []int, configu
 	allEEEDisabled := strings.Contains(lower, "eee globally disabled") || configHasGlobal(configuration, "no eee enable")
 	eeeEnabled := eeeEnabledPorts(configuration)
 	for _, port := range ports {
-		iface := fmt.Sprintf("interface gi1/0/%d", port)
+		iface := fmt.Sprintf("interface gi%d", port)
 		if allTrusted || interfaceHas(configuration, iface, "qos trust") {
 			h.QoSTrustedPorts++
 		}
@@ -267,8 +326,15 @@ func (a *SG350SSHConfigurator) Apply(ctx context.Context, change domain.ConfigCh
 	}
 	output, err := a.run(client, append([]string{"terminal datadump"}, change.Commands...))
 	_ = client.Close()
+	if os.Getenv("ENM_DEBUG_SSH") == "1" {
+		log.Printf("SG350 apply output: %q", output)
+	}
 	if err != nil || cliErrorPattern.MatchString(output) {
-		return snapshot, fmt.Errorf("configuration rejected; running configuration was not saved: %s", cleanCLIError(output, err))
+		rollbackErr := a.executeRollback(ctx, rollbackCommands)
+		if rollbackErr == nil {
+			return snapshot, fmt.Errorf("configuration rejected and was automatically rolled back: %s", cleanCLIError(output, err))
+		}
+		return snapshot, fmt.Errorf("configuration rejected and automatic rollback failed (%v): %s", rollbackErr, cleanCLIError(output, err))
 	}
 	client, err = a.dial(ctx)
 	if err != nil {
@@ -278,6 +344,13 @@ func (a *SG350SSHConfigurator) Apply(ctx context.Context, change domain.ConfigCh
 	_ = client.Close()
 	if err != nil || strings.TrimSpace(verify) == "" {
 		return snapshot, errors.New("configuration verification failed; running configuration was not saved")
+	}
+	if err := verifyAppliedConfiguration(change.Commands, verify); err != nil {
+		rollbackErr := a.executeRollback(ctx, rollbackCommands)
+		if rollbackErr == nil {
+			return snapshot, fmt.Errorf("configuration verification failed and the change was automatically rolled back: %w", err)
+		}
+		return snapshot, fmt.Errorf("configuration verification failed (%v) and automatic rollback failed: %w", err, rollbackErr)
 	}
 	client, err = a.dial(ctx)
 	if err != nil {
@@ -290,6 +363,53 @@ func (a *SG350SSHConfigurator) Apply(ctx context.Context, change domain.ConfigCh
 	_ = client.Close()
 	a.lastSnapshotID = snapshot.ID
 	return snapshot, nil
+}
+
+func (a *SG350SSHConfigurator) executeRollback(ctx context.Context, commands []string) error {
+	client, err := a.dial(ctx)
+	if err != nil {
+		return err
+	}
+	output, runErr := a.run(client, append([]string{"terminal datadump"}, commands...))
+	_ = client.Close()
+	if runErr != nil || cliErrorPattern.MatchString(output) {
+		return fmt.Errorf("rollback commands rejected: %s", cleanCLIError(output, runErr))
+	}
+	client, err = a.dial(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = a.run(client, []string{"terminal datadump", "copy running-config startup-config", "y"})
+	_ = client.Close()
+	return err
+}
+
+func verifyAppliedConfiguration(commands []string, configuration string) error {
+	currentPort := ""
+	for _, command := range commands {
+		switch {
+		case strings.HasPrefix(command, "interface gi"):
+			currentPort = command
+		case strings.HasPrefix(command, "vlan ") && strings.Contains(command, " name "):
+			fields := strings.Fields(command)
+			if len(fields) < 2 || !configurationHasVLAN(configuration, fields[1]) {
+				return fmt.Errorf("angelegter Netzwerkbereich ist nicht aktiv")
+			}
+		case strings.HasPrefix(command, "description ") && currentPort != "":
+			if !interfaceHas(configuration, currentPort, command) {
+				return fmt.Errorf("Portname wurde nicht übernommen")
+			}
+		case strings.HasPrefix(command, "switchport access vlan ") && currentPort != "":
+			if !interfaceHas(configuration, currentPort, command) {
+				return fmt.Errorf("Portrolle wurde nicht vollständig übernommen")
+			}
+		case strings.HasPrefix(command, "switchport trunk allowed vlan add ") && currentPort != "":
+			if !interfaceVLANMembership(configuration, currentPort, strings.TrimPrefix(command, "switchport trunk allowed vlan add ")) {
+				return fmt.Errorf("Trunk-Rolle wurde nicht vollständig übernommen")
+			}
+		}
+	}
+	return nil
 }
 
 func (a *SG350SSHConfigurator) Rollback(ctx context.Context, snapshotID string) error {
@@ -312,6 +432,9 @@ func (a *SG350SSHConfigurator) Rollback(ctx context.Context, snapshotID string) 
 	}
 	output, err := a.run(client, append([]string{"terminal datadump"}, commands...))
 	_ = client.Close()
+	if os.Getenv("ENM_DEBUG_SSH") == "1" {
+		log.Printf("SG350 rollback output: %q", output)
+	}
 	if err != nil || cliErrorPattern.MatchString(output) {
 		return fmt.Errorf("rollback rejected: %s", cleanCLIError(output, err))
 	}
@@ -338,9 +461,15 @@ func buildRollbackCommands(configuration string, applied []string) []string {
 	commands := []string{"configure terminal"}
 	type actions struct{ membership, settings, mode []string }
 	portActions := map[string]*actions{}
+	createdVLANs := []string{}
 	currentPort := ""
 	for _, command := range applied {
 		switch {
+		case strings.HasPrefix(command, "vlan ") && strings.Contains(command, " name "):
+			fields := strings.Fields(command)
+			if len(fields) >= 2 && !configurationHasVLAN(configuration, fields[1]) {
+				createdVLANs = append(createdVLANs, fields[1])
+			}
 		case command == "ip igmp snooping" && global("no ip igmp snooping"):
 			commands = append(commands, "no ip igmp snooping")
 		case strings.HasPrefix(command, "ip igmp snooping vlan ") && global("no "+command):
@@ -353,7 +482,7 @@ func buildRollbackCommands(configuration string, applied []string) []string {
 			} else {
 				commands = append(commands, originalTrust)
 			}
-		case strings.HasPrefix(command, "interface gi1/0/"):
+		case strings.HasPrefix(command, "interface gi"):
 			currentPort = command
 			if portActions[currentPort] == nil {
 				portActions[currentPort] = &actions{}
@@ -362,11 +491,29 @@ func buildRollbackCommands(configuration string, applied []string) []string {
 			portActions[currentPort].settings = append(portActions[currentPort].settings, "no qos trust")
 		case command == "no eee enable" && currentPort != "" && !interfaceHas(configuration, currentPort, "no eee enable") && !global("no eee enable"):
 			portActions[currentPort].settings = append(portActions[currentPort].settings, "eee enable")
+		case command == "eee enable" && currentPort != "" && !interfaceHas(configuration, currentPort, "eee enable"):
+			portActions[currentPort].settings = append(portActions[currentPort].settings, "no eee enable")
+		case strings.HasPrefix(command, "description ") && currentPort != "":
+			original := interfaceCommand(configuration, currentPort, "description ")
+			if original != command {
+				if original == "" {
+					original = "no description"
+				}
+				portActions[currentPort].settings = append(portActions[currentPort].settings, original)
+			}
+		case (command == "power inline auto" || command == "power inline never") && currentPort != "":
+			original := interfaceCommand(configuration, currentPort, "power inline ")
+			if original != command {
+				if original == "" {
+					original = "power inline auto"
+				}
+				portActions[currentPort].settings = append(portActions[currentPort].settings, original)
+			}
 		case strings.HasPrefix(command, "switchport access vlan ") && currentPort != "":
 			original := interfaceCommand(configuration, currentPort, "switchport access vlan ")
 			if original != command {
 				if original == "" {
-					original = "no switchport access vlan"
+					original = "switchport access vlan 1"
 				}
 				portActions[currentPort].membership = append(portActions[currentPort].membership, original)
 			}
@@ -379,7 +526,7 @@ func buildRollbackCommands(configuration string, applied []string) []string {
 			original := interfaceCommand(configuration, currentPort, "switchport mode ")
 			if original != command {
 				if original == "" {
-					original = "no switchport mode"
+					original = "switchport mode access"
 				}
 				portActions[currentPort].mode = append(portActions[currentPort].mode, original)
 			}
@@ -397,7 +544,40 @@ func buildRollbackCommands(configuration string, applied []string) []string {
 		commands = append(commands, portActions[port].mode...)
 		commands = append(commands, "exit")
 	}
+	if len(createdVLANs) > 0 {
+		commands = append(commands, "vlan database")
+		for _, vlan := range createdVLANs {
+			commands = append(commands, "no vlan "+vlan)
+		}
+		commands = append(commands, "exit")
+	}
 	return append(commands, "end")
+}
+
+func configurationHasVLAN(configuration, wanted string) bool {
+	inside := false
+	for _, line := range strings.Split(strings.ReplaceAll(configuration, "\r", ""), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "vlan database" {
+			inside = true
+			continue
+		}
+		if inside && trimmed == "exit" {
+			inside = false
+			continue
+		}
+		if !inside || !strings.HasPrefix(trimmed, "vlan ") {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(trimmed, "vlan "))
+		value = strings.Fields(value)[0]
+		for _, id := range parseVLANRange(value) {
+			if fmt.Sprint(id) == wanted {
+				return true
+			}
+		}
+	}
+	return wanted == "1"
 }
 
 func interfaceCommand(configuration, interfaceCommand, prefix string) string {
@@ -415,7 +595,7 @@ func interfaceLines(configuration, interfaceCommand string) []string {
 	for _, line := range strings.Split(strings.ReplaceAll(configuration, "\r", ""), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "interface ") {
-			inside = trimmed == interfaceCommand
+			inside = interfaceNamesEqual(trimmed, interfaceCommand)
 			continue
 		}
 		if inside && trimmed == "exit" {
@@ -426,6 +606,15 @@ func interfaceLines(configuration, interfaceCommand string) []string {
 		}
 	}
 	return result
+}
+
+func interfaceNamesEqual(left, right string) bool {
+	normalize := func(value string) string {
+		value = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(value, "interface ")))
+		value = strings.ReplaceAll(value, "gigabitethernet", "gi")
+		return value
+	}
+	return normalize(left) == normalize(right)
 }
 
 func interfaceVLANMembership(configuration, interfaceCommand, vlan string) bool {
@@ -448,7 +637,7 @@ func interfaceHas(configuration, interfaceCommand, wanted string) bool {
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "interface ") {
-			inside = trimmed == interfaceCommand
+			inside = interfaceNamesEqual(trimmed, interfaceCommand)
 			continue
 		}
 		if inside && trimmed == "exit" {
@@ -461,12 +650,12 @@ func interfaceHas(configuration, interfaceCommand, wanted string) bool {
 	return false
 }
 
-var cliErrorPattern = regexp.MustCompile(`(?im)^\s*(% ?(?:invalid|incomplete|ambiguous|error)|bad command|unknown command)`)
-var allowedConfigCommand = regexp.MustCompile(`^(configure terminal|end|exit|ip igmp snooping(?: vlan [1-9][0-9]{0,3})?|qos trust(?: dscp)?|no eee enable|interface gi1/0/(?:[1-9]|1[0-9]|2[0-8])|switchport mode (?:access|trunk)|switchport access vlan [1-9][0-9]{0,3}|switchport trunk allowed vlan (?:add|remove) [1-9][0-9]{0,3})$`)
+var cliErrorPattern = regexp.MustCompile(`(?im)^\s*(% ?(?:bad|wrong|unrecognized|invalid|incomplete|ambiguous|error)|bad command|unknown command)`)
+var allowedConfigCommand = regexp.MustCompile(`^(configure terminal|end|exit|vlan database|vlan [1-9][0-9]{0,3} name [A-Za-z0-9_-]{1,32}|no vlan [1-9][0-9]{0,3}|ip igmp snooping(?: vlan [1-9][0-9]{0,3})?|qos trust(?: dscp)?|(?:no )?eee enable|power inline (?:auto|never)|description "[A-Za-z0-9ÄÖÜäöüß _.,:+()/#-]{1,64}"|description [A-Za-z0-9ÄÖÜäöüß_.,:+()/#-]{1,64}|no description|interface gi(?:[1-9]|1[0-9]|2[0-8])|switchport mode (?:access|trunk)|switchport access vlan [1-9][0-9]{0,3}|switchport trunk allowed vlan (?:add|remove) [1-9][0-9]{0,3})$`)
 
 func validateConfigCommands(commands []string) error {
-	if len(commands) == 0 || len(commands) > 128 {
-		return errors.New("configuration plan must contain 1-128 commands")
+	if len(commands) == 0 || len(commands) > 512 {
+		return errors.New("configuration plan must contain 1-512 commands")
 	}
 	for _, command := range commands {
 		if strings.ContainsAny(command, "\r\n;|&") || !allowedConfigCommand.MatchString(strings.TrimSpace(command)) {
@@ -556,7 +745,7 @@ func (a *SG350SSHConfigurator) run(client *ssh.Client, commands []string) (strin
 		return "", err
 	}
 	defer session.Close()
-	var output bytes.Buffer
+	output := &synchronizedBuffer{}
 	stdout, err := session.StdoutPipe()
 	if err != nil {
 		return "", err
@@ -576,20 +765,24 @@ func (a *SG350SSHConfigurator) run(client *ssh.Client, commands []string) (strin
 		return "", err
 	}
 	done := make(chan struct{})
-	go func() { _, _ = io.Copy(&output, io.MultiReader(stdout, stderr)); close(done) }()
+	go func() { _, _ = io.Copy(output, io.MultiReader(stdout, stderr)); close(done) }()
+	_ = waitForCLIPrompt(output, 0, 4*time.Second)
 	for _, command := range commands {
+		start := output.Len()
 		if _, err := io.WriteString(stdin, command+"\n"); err != nil {
 			return output.String(), err
 		}
-		delay := 300 * time.Millisecond
-		if strings.HasPrefix(command, "show running-config") {
-			delay = 2 * time.Second
-		} else if strings.HasPrefix(command, "show ") {
-			delay = time.Second
-		} else if strings.HasPrefix(command, "copy running-config") {
-			delay = 1500 * time.Millisecond
+		if strings.HasPrefix(command, "copy running-config") {
+			time.Sleep(1500 * time.Millisecond)
+			continue
 		}
-		time.Sleep(delay)
+		timeout := 12 * time.Second
+		if strings.HasPrefix(command, "show running-config") || command == "y" {
+			timeout = 25 * time.Second
+		}
+		if err := waitForCLIPrompt(output, start, timeout); err != nil {
+			return output.String(), fmt.Errorf("wait for CLI after %q: %w", command, err)
+		}
 	}
 	_, _ = io.WriteString(stdin, "exit\n")
 	_ = stdin.Close()
@@ -610,6 +803,37 @@ func (a *SG350SSHConfigurator) run(client *ssh.Client, commands []string) (strin
 		_ = session.Close()
 		return output.String(), errors.New("SSH command timed out")
 	}
+}
+
+type synchronizedBuffer struct {
+	mu   sync.Mutex
+	data bytes.Buffer
+}
+
+func (b *synchronizedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.data.Write(p)
+}
+func (b *synchronizedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.data.String()
+}
+func (b *synchronizedBuffer) Len() int { b.mu.Lock(); defer b.mu.Unlock(); return b.data.Len() }
+
+var cliPromptPattern = regexp.MustCompile(`(?m)(?:[>#]|\])\s*$`)
+
+func waitForCLIPrompt(output *synchronizedBuffer, start int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		value := output.String()
+		if start < len(value) && cliPromptPattern.MatchString(value[start:]) {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return errors.New("CLI prompt timed out")
 }
 
 func cleanCLIError(output string, err error) string {

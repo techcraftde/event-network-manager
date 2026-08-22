@@ -63,12 +63,20 @@ func TestModelFromDescription(t *testing.T) {
 }
 
 func TestBuildRollbackCommandsRestoresOnlyChangedSettings(t *testing.T) {
-	configuration := "qos trust cos\ninterface gi1/0/5\n eee enable\n exit\n"
-	applied := []string{"configure terminal", "ip igmp snooping", "qos trust dscp", "interface gi1/0/5", "qos trust", "no eee enable", "exit", "end"}
+	configuration := "qos trust cos\ninterface gi5\n eee enable\n exit\n"
+	applied := []string{"configure terminal", "ip igmp snooping", "qos trust dscp", "interface gi5", "qos trust", "no eee enable", "exit", "end"}
 	rollback := strings.Join(buildRollbackCommands(configuration, applied), "\n")
-	for _, expected := range []string{"qos trust cos", "interface gi1/0/5", "no qos trust", "eee enable"} {
+	for _, expected := range []string{"qos trust cos", "interface gi5", "no qos trust", "eee enable"} {
 		if !strings.Contains(rollback, expected) {
 			t.Errorf("rollback missing %q:\n%s", expected, rollback)
 		}
+	}
+}
+
+func TestParseConnectedDevicesCombinesMACAndARP(t *testing.T) {
+	output := "1  00:11:22:33:44:55  dynamic  gi7\n192.168.20.42  00:11:22:33:44:55  dynamic\n"
+	devices := parseConnectedDevices("stage", output)
+	if len(devices) != 1 || devices[0].PortIndex != 7 || devices[0].IPAddress != "192.168.20.42" || devices[0].MACAddress != "00:11:22:33:44:55" {
+		t.Fatalf("devices=%#v", devices)
 	}
 }

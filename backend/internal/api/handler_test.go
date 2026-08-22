@@ -37,6 +37,29 @@ func TestDanteHealthEndpoint(t *testing.T) {
 	}
 }
 
+func TestRolePlanEndpoint(t *testing.T) {
+	r := httptest.NewRequest("POST", "/api/config/role-plan", strings.NewReader(`{"switchId":"foh","ports":[{"portIndex":2,"displayName":"Lichtpult","roleId":"lighting"}]}`))
+	w := httptest.NewRecorder()
+	NewHandler(platform.NewMockServices()).ServeHTTP(w, r)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `description \"Lichtpult\"`) || !strings.Contains(w.Body.String(), "Lighting") {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestSwitchRenameDecoratesTopology(t *testing.T) {
+	h := NewHandler(platform.NewMockServices())
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("PUT", "/api/switches/name", strings.NewReader(`{"switchId":"foh","name":"FOH Rack"}`)))
+	if w.Code != 200 {
+		t.Fatalf("rename status=%d body=%s", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/api/topology", nil))
+	if !strings.Contains(w.Body.String(), `"name":"FOH Rack"`) || !strings.Contains(w.Body.String(), `"displayName":"Port 1"`) {
+		t.Fatalf("body=%s", w.Body.String())
+	}
+}
+
 func TestCORSAllowsLoopbackFrontend(t *testing.T) {
 	r := httptest.NewRequest("GET", "/api/health", nil)
 	r.Header.Set("Origin", "http://127.0.0.1:5173")

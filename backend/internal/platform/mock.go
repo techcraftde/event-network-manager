@@ -10,8 +10,12 @@ import (
 )
 
 type MockAdapter struct {
-	mu        sync.Mutex
-	snapshots []domain.Snapshot
+	mu            sync.Mutex
+	snapshots     []domain.Snapshot
+	profiles      []domain.RoleProfile
+	settings      []domain.PortSetting
+	switchNames   map[string]string
+	roleRollbacks map[string][]domain.PortSetting
 }
 
 func (m *MockAdapter) Status(context.Context, string) (domain.ConfigStatus, error) {
@@ -33,7 +37,7 @@ func (m *MockAdapter) DanteHealth(_ context.Context, request domain.DanteHealthR
 	}
 	configuration := fmt.Sprintf("ip igmp snooping\nip igmp snooping vlan %d\nqos trust dscp\n", request.VLANID)
 	for _, port := range ports {
-		configuration += fmt.Sprintf("interface gi1/0/%d\n qos trust\n no eee enable\n exit\n", port)
+		configuration += fmt.Sprintf("interface gi%d\n qos trust\n no eee enable\n exit\n", port)
 	}
 	return inspectDanteConfiguration(request.SwitchID, request.VLANID, ports, configuration), nil
 }
@@ -43,8 +47,11 @@ func (m *MockAdapter) CaptureSnapshot(ctx context.Context, switchID string) (dom
 }
 
 func NewMockServices() Services {
-	m := &MockAdapter{}
-	return Services{Mode: "mock", Discovery: m, Telemetry: m, Configurator: m, Snapshots: m}
+	m := &MockAdapter{profiles: domain.DefaultRoleProfiles(), switchNames: map[string]string{}, roleRollbacks: map[string][]domain.PortSetting{}}
+	return Services{Mode: "mock", Discovery: m, Telemetry: m, Inventory: m, Configurator: m, Snapshots: m, Preferences: m}
+}
+func (m *MockAdapter) ConnectedDevices(context.Context, string) ([]domain.ConnectedDevice, error) {
+	return []domain.ConnectedDevice{{ID: "device-console", SwitchID: "foh", PortIndex: 2, Name: "Yamaha CL5", IPAddress: "192.168.50.20", MACAddress: "00:11:22:33:44:55", Model: "Dante Console", SuggestedRole: "Dante/Audio", Protocol: "LLDP/MAC"}}, nil
 }
 
 func (m *MockAdapter) Discover(ctx context.Context) ([]domain.Switch, error) {
@@ -71,7 +78,7 @@ func mockPorts(count, seed int) []domain.Port {
 		idx := i + 1
 		link := idx <= 10 || idx >= 25
 		role := roles[(idx+seed)%len(roles)]
-		ports[i] = domain.Port{Index: idx, Name: fmt.Sprintf("gi%d", idx), Link: link, SpeedMbps: 1000, Role: role, VLANs: []int{10 + (idx%4)*10}, RxMbps: float64((idx*seed*7)%90) / 10, TxMbps: float64((idx*seed*11)%70) / 10}
+		ports[i] = domain.Port{Index: idx, Name: fmt.Sprintf("gi%d", idx), DisplayName: fmt.Sprintf("Port %d", idx), Link: link, SpeedMbps: 1000, Role: role, VLANs: []int{10 + (idx%4)*10}, RxMbps: float64((idx*seed*7)%90) / 10, TxMbps: float64((idx*seed*11)%70) / 10}
 		if role == "Dante" && link {
 			ports[i].PoEWatts = 6.4
 		}
@@ -106,4 +113,79 @@ func (m *MockAdapter) List(_ context.Context, switchID string) ([]domain.Snapsho
 		}
 	}
 	return out, nil
+}
+
+func (m *MockAdapter) RoleProfiles(context.Context) ([]domain.RoleProfile, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]domain.RoleProfile(nil), m.profiles...), nil
+}
+func (m *MockAdapter) SaveRoleProfiles(_ context.Context, profiles []domain.RoleProfile) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.profiles = append([]domain.RoleProfile(nil), profiles...)
+	return nil
+}
+func (m *MockAdapter) PortSettings(_ context.Context, switchID string) ([]domain.PortSetting, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []domain.PortSetting{}
+	for _, setting := range m.settings {
+		if setting.SwitchID == switchID {
+			out = append(out, setting)
+		}
+	}
+	return out, nil
+}
+func (m *MockAdapter) SavePortSettings(_ context.Context, settings []domain.PortSetting) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, setting := range settings {
+		updated := false
+		for i := range m.settings {
+			if m.settings[i].SwitchID == setting.SwitchID && m.settings[i].PortIndex == setting.PortIndex {
+				m.settings[i] = setting
+				updated = true
+			}
+		}
+		if !updated {
+			m.settings = append(m.settings, setting)
+		}
+	}
+	return nil
+}
+func (m *MockAdapter) SwitchDisplayName(_ context.Context, switchID string) (string, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	name, ok := m.switchNames[switchID]
+	return name, ok, nil
+}
+func (m *MockAdapter) SaveSwitchDisplayName(_ context.Context, switchID, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.switchNames[switchID] = name
+	return nil
+}
+func (m *MockAdapter) SaveRoleSettingRollback(_ context.Context, snapshotID string, settings []domain.PortSetting) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.roleRollbacks[snapshotID] = append([]domain.PortSetting(nil), settings...)
+	return nil
+}
+func (m *MockAdapter) RestoreRoleSettings(_ context.Context, snapshotID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, before := range m.roleRollbacks[snapshotID] {
+		kept := m.settings[:0]
+		for _, current := range m.settings {
+			if current.SwitchID != before.SwitchID || current.PortIndex != before.PortIndex {
+				kept = append(kept, current)
+			}
+		}
+		m.settings = kept
+		if before.DisplayName != "" || before.RoleID != "" {
+			m.settings = append(m.settings, before)
+		}
+	}
+	return nil
 }

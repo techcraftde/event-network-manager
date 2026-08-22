@@ -1,9 +1,14 @@
-export type Port={index:number;name:string;link:boolean;speedMbps:number;role:string;vlans:number[];pvid:number;taggedVlans:number[];untaggedVlans:number[];vlanMode:string;rxMbps:number;txMbps:number;errors:number;poeWatts:number;poeEnabled:boolean};
+export type Port={index:number;name:string;displayName:string;roleId:string;link:boolean;speedMbps:number;role:string;vlans:number[];pvid:number;taggedVlans:number[];untaggedVlans:number[];vlanMode:string;rxMbps:number;txMbps:number;errors:number;poeWatts:number;poeEnabled:boolean};
 export type Switch={id:string;name:string;model:string;address:string;status:string;firmwareVersion:string;hardwareVersion:string;serialNumber:string;macAddress:string;uptimeSeconds:number;cpuPercent:number;temperatureC:number;poeBudgetWatts:number;poeUsageWatts:number;ports:Port[]};
-export type Link={id:string;sourceSwitchId:string;sourcePort:number;targetSwitchId:string;targetPort:number;protocol:string};
+export type Link={id:string;sourceSwitchId:string;sourcePort:number;targetSwitchId:string;targetPort:number;targetDeviceId?:string;protocol:string};
+export type ConnectedDevice={id:string;switchId:string;portIndex:number;name:string;ipAddress?:string;macAddress?:string;model?:string;suggestedRole?:string;protocol:string};
 export type VLAN={id:number;name:string};
-export type Topology={switches:Switch[];links:Link[];updatedAt:string;source:string;vlans:VLAN[]};
+export type Topology={switches:Switch[];links:Link[];updatedAt:string;source:string;vlans:VLAN[];devices:ConnectedDevice[]};
 export type Snapshot={id:string;switchId:string;createdAt:string;sizeBytes:number};
 export type ConfigStatus={switchId:string;available:boolean;hostKeyTrusted:boolean;hostKeyAlgorithm?:string;hostKeyFingerprint?:string;message?:string};
 export type ConfigPlan={id:string;switchId:string;description:string;commands:string[];warnings:string[]};
 export type DanteHealth={switchId:string;vlanId:number;checkedAt:string;igmpGlobal:boolean;igmpVlan:boolean;qosDscp:boolean;selectedPorts:number;qosTrustedPorts:number;eeeDisabledPorts:number;healthy:boolean;messages:string[]};
+export type RoleProfile={id:string;name:string;description:string;color:string;icon:string;vlanId:number;portMode:'access'|'trunk';multicast:boolean;danteQos:boolean;disableEee:boolean;poeMode:'auto'|'off';allowedRoleIds:string[]};
+export type RolePortRequest={portIndex:number;displayName:string;roleId:string};
+export type Alarm={id:string;severity:'critical'|'warning'|'info';category:string;switchId:string;switchName:string;portIndex?:number;portName?:string;title:string;message:string;recommendation:string;currentValue?:number;threshold?:number;detectedAt:string};
+export type AlarmReport={generatedAt:string;healthPercent:number;criticalCount:number;warningCount:number;infoCount:number;checksOk:string[];alarms:Alarm[]};

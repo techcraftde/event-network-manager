@@ -13,6 +13,9 @@ type Discovery interface {
 type Telemetry interface {
 	Topology(context.Context) (domain.Topology, error)
 }
+type DeviceInventory interface {
+	ConnectedDevices(context.Context, string) ([]domain.ConnectedDevice, error)
+}
 type Configurator interface {
 	Status(context.Context, string) (domain.ConfigStatus, error)
 	TrustHostKey(context.Context, domain.HostKeyTrust) (domain.ConfigStatus, error)
@@ -38,10 +41,23 @@ type RollbackStore interface {
 	RollbackCommands(context.Context, string) ([]string, bool, error)
 }
 
+type RoleStore interface {
+	RoleProfiles(context.Context) ([]domain.RoleProfile, error)
+	SaveRoleProfiles(context.Context, []domain.RoleProfile) error
+	PortSettings(context.Context, string) ([]domain.PortSetting, error)
+	SavePortSettings(context.Context, []domain.PortSetting) error
+	SwitchDisplayName(context.Context, string) (string, bool, error)
+	SaveSwitchDisplayName(context.Context, string, string) error
+	SaveRoleSettingRollback(context.Context, string, []domain.PortSetting) error
+	RestoreRoleSettings(context.Context, string) error
+}
+
 type Services struct {
 	Mode         string
 	Discovery    Discovery
 	Telemetry    Telemetry
+	Inventory    DeviceInventory
 	Configurator Configurator
 	Snapshots    SnapshotStore
+	Preferences  RoleStore
 }

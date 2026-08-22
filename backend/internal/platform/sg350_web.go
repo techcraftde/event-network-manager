@@ -173,6 +173,12 @@ func NewSG350WebServices(config SG350WebConfig) (Services, error) {
 	return Services{
 		Mode: "sg350-web", Discovery: adapter, Telemetry: adapter,
 		Configurator: configurator, Snapshots: snapshots,
+		Inventory: func() DeviceInventory {
+			if inventory, ok := configurator.(DeviceInventory); ok {
+				return inventory
+			}
+			return nil
+		}(),
 	}, nil
 }
 
@@ -363,16 +369,14 @@ func (a *SG350WebAdapter) Topology(ctx context.Context) (domain.Topology, error)
 	}
 	switches := []domain.Switch{sw}
 	links := make([]domain.Link, 0, len(a.static.neighbors))
+	devices := make([]domain.ConnectedDevice, 0, len(a.static.neighbors))
 	for i, neighbor := range a.static.neighbors {
 		neighborID := fmt.Sprintf("neighbor-%d-%s", i, safeID(neighbor.name))
-		switches = append(switches, domain.Switch{
-			ID: neighborID, Name: neighbor.name, Model: neighbor.model,
-			Status: "neighbor", Ports: []domain.Port{},
-		})
+		devices = append(devices, domain.ConnectedDevice{ID: neighborID, SwitchID: switchID, PortIndex: neighbor.localPort, Name: neighbor.name, Model: neighbor.model, SuggestedRole: inferDeviceRole(neighbor.name + " " + neighbor.model), Protocol: neighbor.protocol})
 		links = append(links, domain.Link{
 			ID:             fmt.Sprintf("%s-%s-%d", switchID, neighborID, neighbor.localPort),
 			SourceSwitchID: switchID, SourcePort: neighbor.localPort,
-			TargetSwitchID: neighborID, Protocol: neighbor.protocol,
+			TargetDeviceID: neighborID, Protocol: neighbor.protocol,
 		})
 	}
 	if persister, ok := a.config.Snapshots.(interface {
@@ -382,8 +386,29 @@ func (a *SG350WebAdapter) Topology(ctx context.Context) (domain.Topology, error)
 	}
 	return domain.Topology{
 		Switches: switches, Links: links, UpdatedAt: time.Now(),
-		Source: "Cisco HTTPS · live", VLANs: a.static.vlans,
+		Source: "Cisco HTTPS · live", VLANs: a.static.vlans, Devices: devices,
 	}, nil
+}
+
+func inferDeviceRole(value string) string {
+	lower := strings.ToLower(value)
+	for _, candidate := range []struct {
+		role  string
+		words []string
+	}{
+		{"Dante/Audio", []string{"dante", "audinate", "audio", "mixer", "console"}},
+		{"Lighting", []string{"art-net", "artnet", "sacn", "lighting", "light", "dmx"}},
+		{"Video", []string{"video", "ndi", "camera", "encoder", "decoder"}},
+		{"Switch-Management", []string{"switch", "cisco", "netgear", "aruba"}},
+		{"Control", []string{"control", "controller", "processor"}},
+	} {
+		for _, word := range candidate.words {
+			if strings.Contains(lower, word) {
+				return candidate.role
+			}
+		}
+	}
+	return ""
 }
 
 func (a *SG350WebAdapter) invalidateLogin() {

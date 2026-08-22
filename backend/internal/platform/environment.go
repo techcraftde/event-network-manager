@@ -64,9 +64,12 @@ func NewServicesFromEnvironment() Services {
 		return NewMockServices()
 	}
 	if len(devices) == 1 {
+		devices[0].Preferences = store
 		return devices[0]
 	}
-	return NewMultiServices(devices, snapshots)
+	services := NewMultiServices(devices, snapshots)
+	services.Preferences = store
+	return services
 }
 
 func keychainPassword(address string) string {

@@ -42,7 +42,7 @@ func buildDantePlan(request domain.DantePlanRequest) (domain.ConfigPlan, error) 
 	}
 	for _, port := range ports {
 		commands = append(commands,
-			fmt.Sprintf("interface gi1/0/%d", port),
+			fmt.Sprintf("interface gi%d", port),
 			"qos trust",
 			"no eee enable",
 			"exit",

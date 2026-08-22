@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -9,13 +10,17 @@ import (
 	"event-network-manager/backend/internal/platform"
 )
 
-type Handler struct{ services platform.Services }
+type Handler struct {
+	services platform.Services
+	monitor  *alarmMonitor
+}
 
 func NewHandler(services platform.Services) http.Handler {
-	h := &Handler{services: services}
+	h := &Handler{services: services, monitor: newAlarmMonitor()}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", h.health)
 	mux.HandleFunc("GET /api/topology", h.topology)
+	mux.HandleFunc("GET /api/alarms", h.alarms)
 	mux.HandleFunc("POST /api/discovery", h.discovery)
 	mux.HandleFunc("GET /api/snapshots", h.snapshots)
 	mux.HandleFunc("POST /api/snapshots", h.captureSnapshot)
@@ -23,10 +28,167 @@ func NewHandler(services platform.Services) http.Handler {
 	mux.HandleFunc("POST /api/config/trust-host-key", h.trustHostKey)
 	mux.HandleFunc("POST /api/config/dante-plan", h.dantePlan)
 	mux.HandleFunc("POST /api/config/vlan-plan", h.vlanPlan)
+	mux.HandleFunc("GET /api/roles", h.roles)
+	mux.HandleFunc("PUT /api/roles", h.saveRoles)
+	mux.HandleFunc("GET /api/port-settings", h.portSettings)
+	mux.HandleFunc("PUT /api/switches/name", h.saveSwitchName)
+	mux.HandleFunc("POST /api/config/role-plan", h.rolePlan)
+	mux.HandleFunc("POST /api/config/apply-role", h.applyRole)
 	mux.HandleFunc("POST /api/config/dante-health", h.danteHealth)
 	mux.HandleFunc("POST /api/config/apply", h.apply)
 	mux.HandleFunc("POST /api/config/rollback/{id}", h.rollback)
 	return cors(mux)
+}
+func (h *Handler) alarms(w http.ResponseWriter, r *http.Request) {
+	topology, err := h.services.Telemetry.Topology(r.Context())
+	if err == nil {
+		err = h.decorateTopology(r, &topology)
+	}
+	if err == nil {
+		h.enrichDevices(r, &topology)
+	}
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	respond(w, h.monitor.evaluate(topology), nil)
+}
+func (h *Handler) saveSwitchName(w http.ResponseWriter, r *http.Request) {
+	if h.services.Preferences == nil {
+		write(w, 503, map[string]string{"error": "Switch-Einstellungen sind nicht verfügbar"})
+		return
+	}
+	var request domain.SwitchNameRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		write(w, 400, map[string]string{"error": "ungültige Anfrage"})
+		return
+	}
+	request.Name = strings.TrimSpace(request.Name)
+	if request.SwitchID == "" || len([]rune(request.Name)) < 1 || len([]rune(request.Name)) > 64 || strings.ContainsAny(request.Name, "\r\n\x00") {
+		write(w, 400, map[string]string{"error": "Der Switch-Name muss 1–64 Zeichen lang sein"})
+		return
+	}
+	err := h.services.Preferences.SaveSwitchDisplayName(r.Context(), request.SwitchID, request.Name)
+	respond(w, request, err)
+}
+func (h *Handler) roles(w http.ResponseWriter, r *http.Request) {
+	if h.services.Preferences == nil {
+		write(w, 503, map[string]string{"error": "Rollen-Einstellungen sind nicht verfügbar"})
+		return
+	}
+	v, err := h.services.Preferences.RoleProfiles(r.Context())
+	respond(w, v, err)
+}
+func (h *Handler) saveRoles(w http.ResponseWriter, r *http.Request) {
+	if h.services.Preferences == nil {
+		write(w, 503, map[string]string{"error": "Rollen-Einstellungen sind nicht verfügbar"})
+		return
+	}
+	var profiles []domain.RoleProfile
+	if err := json.NewDecoder(r.Body).Decode(&profiles); err != nil {
+		write(w, 400, map[string]string{"error": "ungültige Rollen-Einstellungen"})
+		return
+	}
+	if err := platform.ValidateRoleProfiles(profiles); err != nil {
+		write(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	err := h.services.Preferences.SaveRoleProfiles(r.Context(), profiles)
+	respond(w, profiles, err)
+}
+func (h *Handler) portSettings(w http.ResponseWriter, r *http.Request) {
+	if h.services.Preferences == nil {
+		write(w, 503, map[string]string{"error": "Port-Einstellungen sind nicht verfügbar"})
+		return
+	}
+	v, err := h.services.Preferences.PortSettings(r.Context(), r.URL.Query().Get("switchId"))
+	respond(w, v, err)
+}
+func (h *Handler) rolePlan(w http.ResponseWriter, r *http.Request) {
+	if h.services.Preferences == nil {
+		write(w, 503, map[string]string{"error": "Rollen-Einstellungen sind nicht verfügbar"})
+		return
+	}
+	var request domain.RolePlanRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		write(w, 400, map[string]string{"error": "ungültige Anfrage"})
+		return
+	}
+	profiles, err := h.services.Preferences.RoleProfiles(r.Context())
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	topology, err := h.services.Telemetry.Topology(r.Context())
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	plan, err := platform.BuildRolePlan(request, profiles, topology.VLANs)
+	respond(w, plan, err)
+}
+func (h *Handler) applyRole(w http.ResponseWriter, r *http.Request) {
+	if h.services.Preferences == nil {
+		write(w, 503, map[string]string{"error": "Port-Einstellungen sind nicht verfügbar"})
+		return
+	}
+	var request domain.RoleApplyRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		write(w, 400, map[string]string{"error": "ungültige Anfrage"})
+		return
+	}
+	profiles, err := h.services.Preferences.RoleProfiles(r.Context())
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	topology, err := h.services.Telemetry.Topology(r.Context())
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	rebuilt, err := platform.BuildRolePlan(domain.RolePlanRequest{SwitchID: request.Plan.SwitchID, Ports: request.Settings}, profiles, topology.VLANs)
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	if strings.Join(rebuilt.Commands, "\n") != strings.Join(request.Plan.Commands, "\n") {
+		write(w, 409, map[string]string{"error": "Die Switch-Daten haben sich geändert. Bitte die Änderung erneut prüfen."})
+		return
+	}
+	snapshot, err := h.services.Configurator.Apply(r.Context(), domain.ConfigChange{SwitchID: rebuilt.SwitchID, Description: rebuilt.Description, Commands: rebuilt.Commands})
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	current, err := h.services.Preferences.PortSettings(r.Context(), rebuilt.SwitchID)
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	currentByPort := map[int]domain.PortSetting{}
+	for _, setting := range current {
+		currentByPort[setting.PortIndex] = setting
+	}
+	before := make([]domain.PortSetting, 0, len(request.Settings))
+	settings := make([]domain.PortSetting, 0, len(request.Settings))
+	for _, setting := range request.Settings {
+		if previous, found := currentByPort[setting.PortIndex]; found {
+			before = append(before, previous)
+		} else {
+			before = append(before, domain.PortSetting{SwitchID: rebuilt.SwitchID, PortIndex: setting.PortIndex})
+		}
+		settings = append(settings, domain.PortSetting{SwitchID: request.Plan.SwitchID, PortIndex: setting.PortIndex, DisplayName: strings.TrimSpace(setting.DisplayName), RoleID: setting.RoleID})
+	}
+	if err := h.services.Preferences.SaveRoleSettingRollback(r.Context(), snapshot.ID, before); err != nil {
+		respond(w, nil, err)
+		return
+	}
+	if err := h.services.Preferences.SavePortSettings(r.Context(), settings); err != nil {
+		respond(w, nil, err)
+		return
+	}
+	respond(w, snapshot, nil)
 }
 func (h *Handler) vlanPlan(w http.ResponseWriter, r *http.Request) {
 	var request domain.VLANPlanRequest
@@ -74,7 +236,107 @@ func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
 }
 func (h *Handler) topology(w http.ResponseWriter, r *http.Request) {
 	v, err := h.services.Telemetry.Topology(r.Context())
+	if err == nil {
+		err = h.decorateTopology(r, &v)
+	}
+	if err == nil {
+		h.enrichDevices(r, &v)
+	}
 	respond(w, v, err)
+}
+func (h *Handler) enrichDevices(r *http.Request, topology *domain.Topology) {
+	if h.services.Inventory == nil {
+		return
+	}
+	for _, sw := range topology.Switches {
+		items, err := h.services.Inventory.ConnectedDevices(r.Context(), sw.ID)
+		if err != nil {
+			continue
+		}
+		for _, item := range items {
+			var port *domain.Port
+			for pi := range sw.Ports {
+				if sw.Ports[pi].Index == item.PortIndex {
+					port = &sw.Ports[pi]
+					break
+				}
+			}
+			if port == nil || strings.EqualFold(port.VLANMode, "trunk") {
+				continue
+			}
+			merged := false
+			for i := range topology.Devices {
+				if topology.Devices[i].SwitchID == item.SwitchID && topology.Devices[i].PortIndex == item.PortIndex {
+					if topology.Devices[i].IPAddress == "" {
+						topology.Devices[i].IPAddress = item.IPAddress
+					}
+					if topology.Devices[i].MACAddress == "" {
+						topology.Devices[i].MACAddress = item.MACAddress
+					}
+					if topology.Devices[i].SuggestedRole == "" && port.RoleID != "" {
+						topology.Devices[i].SuggestedRole = port.Role
+					}
+					merged = true
+					break
+				}
+			}
+			if merged {
+				continue
+			}
+			if item.SuggestedRole == "" && port.RoleID != "" {
+				item.SuggestedRole = port.Role
+			}
+			topology.Devices = append(topology.Devices, item)
+			topology.Links = append(topology.Links, domain.Link{ID: sw.ID + "-" + item.ID, SourceSwitchID: sw.ID, SourcePort: item.PortIndex, TargetDeviceID: item.ID, Protocol: item.Protocol})
+		}
+	}
+}
+func (h *Handler) decorateTopology(r *http.Request, topology *domain.Topology) error {
+	profiles := domain.DefaultRoleProfiles()
+	if h.services.Preferences != nil {
+		stored, err := h.services.Preferences.RoleProfiles(r.Context())
+		if err != nil {
+			return err
+		}
+		profiles = stored
+	}
+	profileByID := map[string]domain.RoleProfile{}
+	for _, profile := range profiles {
+		profileByID[profile.ID] = profile
+	}
+	for si := range topology.Switches {
+		if h.services.Preferences != nil {
+			if name, found, err := h.services.Preferences.SwitchDisplayName(r.Context(), topology.Switches[si].ID); err != nil {
+				return err
+			} else if found {
+				topology.Switches[si].Name = name
+			}
+		}
+		settings := map[int]domain.PortSetting{}
+		if h.services.Preferences != nil {
+			stored, err := h.services.Preferences.PortSettings(r.Context(), topology.Switches[si].ID)
+			if err != nil {
+				return err
+			}
+			for _, setting := range stored {
+				settings[setting.PortIndex] = setting
+			}
+		}
+		for pi := range topology.Switches[si].Ports {
+			port := &topology.Switches[si].Ports[pi]
+			port.DisplayName = "Port " + fmt.Sprint(port.Index)
+			if setting, ok := settings[port.Index]; ok {
+				port.DisplayName, port.RoleID = setting.DisplayName, setting.RoleID
+				if profile, found := profileByID[setting.RoleID]; found {
+					port.Role = profile.Name
+				}
+			}
+			if port.Role == "" {
+				port.Role = "Nicht zugewiesen"
+			}
+		}
+	}
+	return nil
 }
 func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
 	v, err := h.services.Discovery.Discover(r.Context())
@@ -106,6 +368,9 @@ func (h *Handler) apply(w http.ResponseWriter, r *http.Request) {
 }
 func (h *Handler) rollback(w http.ResponseWriter, r *http.Request) {
 	err := h.services.Configurator.Rollback(r.Context(), r.PathValue("id"))
+	if err == nil && h.services.Preferences != nil {
+		err = h.services.Preferences.RestoreRoleSettings(r.Context(), r.PathValue("id"))
+	}
 	respond(w, map[string]bool{"ok": err == nil}, err)
 }
 func respond(w http.ResponseWriter, v any, err error) {
@@ -137,7 +402,7 @@ func cors(next http.Handler) http.Handler {
 			return
 		}
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,OPTIONS")
 		if strings.EqualFold(r.Method, "OPTIONS") {
 			w.WriteHeader(204)
 			return

@@ -18,7 +18,20 @@ type MultiAdapter struct {
 
 func NewMultiServices(devices []Services, snapshots SnapshotStore) Services {
 	m := &MultiAdapter{devices: devices, snapshots: snapshots}
-	return Services{Mode: "sg350-multi", Discovery: m, Telemetry: m, Configurator: m, Snapshots: snapshots}
+	return Services{Mode: "sg350-multi", Discovery: m, Telemetry: m, Inventory: m, Configurator: m, Snapshots: snapshots}
+}
+
+func (m *MultiAdapter) ConnectedDevices(ctx context.Context, switchID string) ([]domain.ConnectedDevice, error) {
+	for _, device := range m.devices {
+		if device.Inventory == nil {
+			continue
+		}
+		items, err := device.Inventory.ConnectedDevices(ctx, switchID)
+		if err == nil {
+			return items, nil
+		}
+	}
+	return []domain.ConnectedDevice{}, nil
 }
 
 func (m *MultiAdapter) Discover(ctx context.Context) ([]domain.Switch, error) {

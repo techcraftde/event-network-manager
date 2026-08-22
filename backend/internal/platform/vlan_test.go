@@ -13,7 +13,7 @@ func TestBuildVLANAccessPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.Join(plan.Commands, "\n")
-	for _, wanted := range []string{"interface gi1/0/2\nswitchport mode access\nswitchport access vlan 20", "interface gi1/0/5"} {
+	for _, wanted := range []string{"interface gi2\nswitchport mode access\nswitchport access vlan 20", "interface gi5"} {
 		if !strings.Contains(got, wanted) {
 			t.Errorf("Plan enthält %q nicht:\n%s", wanted, got)
 		}
@@ -55,10 +55,10 @@ func TestInspectDanteConfiguration(t *testing.T) {
 }
 
 func TestVLANRollbackRestoresPortConfiguration(t *testing.T) {
-	configuration := "interface gi1/0/5\n switchport mode trunk\n switchport trunk allowed vlan add 1,10\n exit\n"
-	applied := []string{"configure terminal", "interface gi1/0/5", "switchport mode access", "switchport access vlan 20", "exit", "end"}
+	configuration := "interface gi5\n switchport mode trunk\n switchport trunk allowed vlan add 1,10\n exit\n"
+	applied := []string{"configure terminal", "interface gi5", "switchport mode access", "switchport access vlan 20", "exit", "end"}
 	rollback := strings.Join(buildRollbackCommands(configuration, applied), "\n")
-	for _, wanted := range []string{"interface gi1/0/5", "no switchport access vlan", "switchport mode trunk"} {
+	for _, wanted := range []string{"interface gi5", "switchport access vlan 1", "switchport mode trunk"} {
 		if !strings.Contains(rollback, wanted) {
 			t.Errorf("Rollback enthält %q nicht:\n%s", wanted, rollback)
 		}

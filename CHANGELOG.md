@@ -2,6 +2,43 @@
 
 Alle wesentlichen Änderungen an Event Network Manager werden hier dokumentiert.
 
+## 0.3.0 – 2026-08-22
+
+### Hinzugefügt
+
+- Sieben zentrale Rollenprofile: Dante/Audio, Control, Lighting, Video,
+  Internet, Trunk und Switch-Management
+- Rollenbasierte Ein-Klick-Konfiguration mit verständlichen Portnamen
+- Frei wählbare Switch-Anzeigenamen für die Topologie
+- Persistenz von Rollen, Portnamen und Switch-Namen in SQLite
+- Automatische VLAN-Erzeugung aus Rollenprofilen
+- Endgeräteansicht aus LLDP/CDP sowie MAC-/ARP-Daten mit Rollenvorschlägen
+- Switchübergreifende Auslastungsübersicht mit Filtern, Kapazitätsbalken und
+  Sitzungsspitzen
+- Event-Check und Alarme für Auslastung, Portfehler, Dante-Link-Speed,
+  Temperatur, Erreichbarkeit und PoE-Budget
+
+### Geändert
+
+- Normalbetrieb zeigt keine VLAN-, Tagged-, PVID- oder Cisco-Details mehr
+- Dante-Zustand ist vollständig deutsch und bezieht seine Ports automatisch
+  aus der Dante/Audio-Rolle
+- SG350-Portsyntax auf die am SG350-28P bestätigte Form `gi1` bis `gi28`
+- SSH-Ausführung wartet auf den echten CLI-Prompt statt mit festen kurzen
+  Pausen zu arbeiten
+- Running-Config-Erfassung wartet auf die vollständige Ausgabe
+- Rollenpläne werden direkt vor dem Anwenden serverseitig neu validiert
+- CLI- oder Verifikationsfehler lösen einen automatischen Rollback aus
+- Rollback stellt zusätzlich lokale Portnamen und Rollenzuweisungen wieder her
+
+### Geprüft
+
+- Portname und Control-Rolle auf Port 24 des SG350-28P real angewendet
+- Automatische VLAN-Erzeugung, vollständiger Snapshot und Startup-Config geprüft
+- Vollständiger Rollback auf Switch und in SQLite geprüft
+- Rollen-, Alarm-, Speicher-, API- und SG350-Parser-Tests bestanden
+- Ports & Rollen, Alarme und Auslastungsübersicht im gerenderten Browser geprüft
+
 ## 0.2.0 – 2026-08-22
 
 ### Hinzugefügt

@@ -7,14 +7,21 @@ Snapshots in SQLite.
 
 ## Funktionen
 
-- Multi-Switch-Topologie mit LLDP-/CDP-Nachbarn
+- Rollenbasierte Portkonfiguration für Dante/Audio, Control, Lighting, Video,
+  Internet, Trunk und Switch-Management
+- Verständliche, frei wählbare Port- und Switch-Namen; VLAN, PVID, QoS, IGMP,
+  EEE und PoE werden aus zentralen Rollenprofilen abgeleitet
+- Multi-Switch-Topologie mit LLDP-/CDP- und MAC-/ARP-Endgeräteerkennung
 - 28-Port-Ansicht mit Link, Speed, RX/TX, Fehlern und PoE
-- VLAN-, PVID-, Tagged-/Untagged- und Access-/Trunk-Erkennung
-- Portauswahl und VLAN-Zuweisung als Access oder getaggter Trunk
+- Switchübergreifende Auslastungsübersicht mit Kapazitätsbalken, Sitzungsspitzen,
+  Sortierung und Filtern nach Switch, Rolle und Linkstatus
+- Event-Check und Alarmsystem für Erreichbarkeit, Auslastung, Dante-Link-Speed,
+  Paketfehler, Temperatur und PoE-Budget
 - Dante-Zustandsprüfung für IGMP Snooping, DSCP QoS und EEE
-- prüfbare Konfigurationspläne mit Befehlsvorschau
+- verständliche Bestätigung; Cisco-Befehle bleiben als optionale Details verfügbar
 - vollständiger Running-Config-Snapshot vor jeder Änderung
-- persistenter inverser Rollback-Plan und Speicherung in Startup Config
+- persistenter inverser Rollback-Plan inklusive lokaler Rollenzuweisungen und
+  Speicherung in Startup Config
 - SSH-Host-Key-Pinning; Passwörter bleiben im macOS-Schlüsselbund
 - lokale HTTP-API als Grenze für einen späteren Proxmox-Remote-Agent
 
@@ -58,6 +65,9 @@ in Produktionsumgebungen durch einen Credential-Provider injiziert werden.
 - explizite Prüfung und Speicherung des SSH-Hostschlüssels
 - enge Allowlist zulässiger SG350-Konfigurationsbefehle
 - Snapshot und Rollback-Plan vor dem ersten Schreibbefehl
+- serverseitiger Neuaufbau und Abgleich jedes Rollenplans vor dem Anwenden
+- automatische Rücknahme teilweise angewendeter Befehle bei CLI- oder
+  Verifikationsfehlern
 - keine Ausgabe von Running Configs über die HTTP-API
 
 ## Projektstruktur

@@ -37,7 +37,12 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("initialize sqlite database: %w", err)
 	}
-	return &Store{db: db}, nil
+	store := &Store{db: db}
+	if err := store.ensureDefaultRoles(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("initialize role profiles: %w", err)
+	}
+	return store, nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -156,4 +161,142 @@ func (s *Store) RollbackCommands(ctx context.Context, snapshotID string) ([]stri
 		return nil, false, err
 	}
 	return commands, true, nil
+}
+
+func (s *Store) ensureDefaultRoles(ctx context.Context) error {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM role_profiles`).Scan(&count); err != nil {
+		return err
+	}
+	if count != 0 {
+		return nil
+	}
+	return s.SaveRoleProfiles(ctx, domain.DefaultRoleProfiles())
+}
+
+func (s *Store) RoleProfiles(ctx context.Context) ([]domain.RoleProfile, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT profile_json FROM role_profiles ORDER BY rowid`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	profiles := []domain.RoleProfile{}
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var profile domain.RoleProfile
+		if err := json.Unmarshal([]byte(raw), &profile); err != nil {
+			return nil, err
+		}
+		profiles = append(profiles, profile)
+	}
+	return profiles, rows.Err()
+}
+
+func (s *Store) SaveRoleProfiles(ctx context.Context, profiles []domain.RoleProfile) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM role_profiles`); err != nil {
+		return err
+	}
+	for _, profile := range profiles {
+		raw, err := json.Marshal(profile)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO role_profiles(id,profile_json) VALUES(?,?)`, profile.ID, string(raw)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) PortSettings(ctx context.Context, switchID string) ([]domain.PortSetting, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT switch_id,port_index,display_name,role_id FROM port_settings WHERE switch_id=? ORDER BY port_index`, switchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	settings := []domain.PortSetting{}
+	for rows.Next() {
+		var setting domain.PortSetting
+		if err := rows.Scan(&setting.SwitchID, &setting.PortIndex, &setting.DisplayName, &setting.RoleID); err != nil {
+			return nil, err
+		}
+		settings = append(settings, setting)
+	}
+	return settings, rows.Err()
+}
+
+func (s *Store) SavePortSettings(ctx context.Context, settings []domain.PortSetting) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, setting := range settings {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO port_settings(switch_id,port_index,display_name,role_id) VALUES(?,?,?,?) ON CONFLICT(switch_id,port_index) DO UPDATE SET display_name=excluded.display_name,role_id=excluded.role_id`, setting.SwitchID, setting.PortIndex, setting.DisplayName, setting.RoleID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) SwitchDisplayName(ctx context.Context, switchID string) (string, bool, error) {
+	var name string
+	err := s.db.QueryRowContext(ctx, `SELECT display_name FROM switch_settings WHERE switch_id=?`, switchID).Scan(&name)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	return name, err == nil, err
+}
+
+func (s *Store) SaveSwitchDisplayName(ctx context.Context, switchID, name string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO switch_settings(switch_id,display_name) VALUES(?,?) ON CONFLICT(switch_id) DO UPDATE SET display_name=excluded.display_name`, switchID, name)
+	return err
+}
+
+func (s *Store) SaveRoleSettingRollback(ctx context.Context, snapshotID string, settings []domain.PortSetting) error {
+	raw, err := json.Marshal(settings)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO role_setting_rollbacks(snapshot_id,settings_json) VALUES(?,?) ON CONFLICT(snapshot_id) DO UPDATE SET settings_json=excluded.settings_json`, snapshotID, string(raw))
+	return err
+}
+
+func (s *Store) RestoreRoleSettings(ctx context.Context, snapshotID string) error {
+	var raw string
+	err := s.db.QueryRowContext(ctx, `SELECT settings_json FROM role_setting_rollbacks WHERE snapshot_id=?`, snapshotID).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var settings []domain.PortSetting
+	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, setting := range settings {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM port_settings WHERE switch_id=? AND port_index=?`, setting.SwitchID, setting.PortIndex); err != nil {
+			return err
+		}
+		if setting.DisplayName != "" || setting.RoleID != "" {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO port_settings(switch_id,port_index,display_name,role_id) VALUES(?,?,?,?)`, setting.SwitchID, setting.PortIndex, setting.DisplayName, setting.RoleID); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
 }

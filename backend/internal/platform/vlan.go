@@ -44,7 +44,7 @@ func buildVLANPlan(request domain.VLANPlanRequest) (domain.ConfigPlan, error) {
 	}
 	commands := []string{"configure terminal"}
 	for _, port := range ports {
-		commands = append(commands, fmt.Sprintf("interface gi1/0/%d", port))
+		commands = append(commands, fmt.Sprintf("interface gi%d", port))
 		if request.Mode == "access" {
 			commands = append(commands, "switchport mode access", fmt.Sprintf("switchport access vlan %d", request.VLANID))
 		} else {

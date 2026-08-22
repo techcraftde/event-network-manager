@@ -1,4 +1,4 @@
-import type {ConfigPlan,ConfigStatus,DanteHealth,Snapshot,Topology} from './types';
+import type {AlarmReport,ConfigPlan,ConfigStatus,DanteHealth,RolePortRequest,RoleProfile,Snapshot,Topology} from './types';
 const base=import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8787';
 export function getTopology():Promise<Topology>{return json('/api/topology')}
 export async function scan():Promise<void>{await json('/api/discovery',{method:'POST'})}
@@ -12,3 +12,9 @@ export function getDanteHealth(switchId:string,vlanId:number,ports:number[]):Pro
 export function applyPlan(plan:ConfigPlan):Promise<Snapshot>{return json('/api/config/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({switchId:plan.switchId,description:plan.description,commands:plan.commands})})}
 export function captureSnapshot(switchId:string):Promise<Snapshot>{return json('/api/snapshots',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({switchId})})}
 export function rollbackSnapshot(snapshotId:string):Promise<{ok:boolean}>{return json(`/api/config/rollback/${encodeURIComponent(snapshotId)}`,{method:'POST'})}
+export function getRoles():Promise<RoleProfile[]>{return json('/api/roles')}
+export function saveRoles(roles:RoleProfile[]):Promise<RoleProfile[]>{return json('/api/roles',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(roles)})}
+export function createRolePlan(switchId:string,ports:RolePortRequest[]):Promise<ConfigPlan>{return json('/api/config/role-plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({switchId,ports})})}
+export function applyRolePlan(plan:ConfigPlan,settings:RolePortRequest[]):Promise<Snapshot>{return json('/api/config/apply-role',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan,settings})})}
+export function saveSwitchName(switchId:string,name:string):Promise<void>{return json('/api/switches/name',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({switchId,name})})}
+export function getAlarms():Promise<AlarmReport>{return json('/api/alarms')}
