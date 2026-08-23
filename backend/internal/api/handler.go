@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -22,6 +23,7 @@ func NewHandler(services platform.Services) http.Handler {
 	mux.HandleFunc("GET /api/topology", h.topology)
 	mux.HandleFunc("GET /api/alarms", h.alarms)
 	mux.HandleFunc("POST /api/discovery", h.discovery)
+	mux.HandleFunc("POST /api/discovery/credentials", h.discoveryCredentials)
 	mux.HandleFunc("GET /api/snapshots", h.snapshots)
 	mux.HandleFunc("POST /api/snapshots", h.captureSnapshot)
 	mux.HandleFunc("GET /api/config/status", h.configStatus)
@@ -455,7 +457,34 @@ func (h *Handler) decorateTopology(r *http.Request, topology *domain.Topology) e
 	return nil
 }
 func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
+	if scanner, ok := h.services.Discovery.(platform.NetworkScanner); ok {
+		var request domain.NetworkScanRequest
+		if r.Body != nil {
+			decoderErr := json.NewDecoder(r.Body).Decode(&request)
+			if decoderErr != nil && decoderErr != io.EOF {
+				write(w, 400, map[string]string{"error": "ungültiger Scanbereich"})
+				return
+			}
+		}
+		v, err := scanner.ScanNetwork(r.Context(), request)
+		respond(w, v, err)
+		return
+	}
 	v, err := h.services.Discovery.Discover(r.Context())
+	respond(w, v, err)
+}
+func (h *Handler) discoveryCredentials(w http.ResponseWriter, r *http.Request) {
+	scanner, ok := h.services.Discovery.(platform.NetworkScanner)
+	if !ok {
+		write(w, 503, map[string]string{"error": "Anmeldung gefundener Switches ist in diesem Modus nicht verfügbar"})
+		return
+	}
+	var request domain.SwitchCredentialRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		write(w, 400, map[string]string{"error": "ungültige Zugangsdaten"})
+		return
+	}
+	v, err := scanner.ConnectDiscoveredSwitch(r.Context(), request)
 	respond(w, v, err)
 }
 func (h *Handler) snapshots(w http.ResponseWriter, r *http.Request) {

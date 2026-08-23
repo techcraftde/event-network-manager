@@ -12,17 +12,32 @@ import (
 )
 
 type MultiAdapter struct {
-	devices   []Services
-	snapshots SnapshotStore
+	mu               sync.RWMutex
+	scanMu           sync.Mutex
+	devices          []Services
+	snapshots        SnapshotStore
+	preferences      RoleStore
+	allowInsecureTLS bool
 }
 
 func NewMultiServices(devices []Services, snapshots SnapshotStore) Services {
-	m := &MultiAdapter{devices: devices, snapshots: snapshots}
+	m := &MultiAdapter{devices: devices, snapshots: snapshots, allowInsecureTLS: true}
 	return Services{Mode: "sg350-multi", Discovery: m, Telemetry: m, Inventory: m, StateReader: m, Configurator: m, Snapshots: snapshots}
 }
 
+func NewManagedServices(devices []Services, snapshots SnapshotStore, preferences RoleStore, allowInsecureTLS bool) Services {
+	m := &MultiAdapter{devices: devices, snapshots: snapshots, preferences: preferences, allowInsecureTLS: allowInsecureTLS}
+	return Services{Mode: "sg350-managed", Discovery: m, Telemetry: m, Inventory: m, StateReader: m, Configurator: m, Snapshots: snapshots, Preferences: preferences}
+}
+
+func (m *MultiAdapter) devicesSnapshot() []Services {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return append([]Services(nil), m.devices...)
+}
+
 func (m *MultiAdapter) ConfigurationState(ctx context.Context, switchID string, profiles []domain.RoleProfile) (domain.SwitchConfigState, error) {
-	for _, device := range m.devices {
+	for _, device := range m.devicesSnapshot() {
 		if device.StateReader == nil {
 			continue
 		}
@@ -35,7 +50,7 @@ func (m *MultiAdapter) ConfigurationState(ctx context.Context, switchID string, 
 }
 
 func (m *MultiAdapter) ConnectedDevices(ctx context.Context, switchID string) ([]domain.ConnectedDevice, error) {
-	for _, device := range m.devices {
+	for _, device := range m.devicesSnapshot() {
 		if device.Inventory == nil {
 			continue
 		}
@@ -57,9 +72,10 @@ func (m *MultiAdapter) Topology(ctx context.Context) (domain.Topology, error) {
 		topology domain.Topology
 		err      error
 	}
-	results := make(chan result, len(m.devices))
+	devices := m.devicesSnapshot()
+	results := make(chan result, len(devices))
 	var wg sync.WaitGroup
-	for _, device := range m.devices {
+	for _, device := range devices {
 		wg.Add(1)
 		go func(service Services) {
 			defer wg.Done()
@@ -69,7 +85,7 @@ func (m *MultiAdapter) Topology(ctx context.Context) (domain.Topology, error) {
 	}
 	wg.Wait()
 	close(results)
-	combined := domain.Topology{UpdatedAt: time.Now(), Source: "Cisco HTTPS · Multi-Switch live"}
+	combined := domain.Topology{Switches: []domain.Switch{}, Links: []domain.Link{}, VLANs: []domain.VLAN{}, UpdatedAt: time.Now(), Source: "Cisco HTTPS · Multi-Switch live"}
 	vlans := map[int]domain.VLAN{}
 	var errs []error
 	for result := range results {
@@ -94,7 +110,7 @@ func (m *MultiAdapter) Topology(ctx context.Context) (domain.Topology, error) {
 }
 
 func (m *MultiAdapter) target(ctx context.Context, switchID string) (Configurator, error) {
-	for _, device := range m.devices {
+	for _, device := range m.devicesSnapshot() {
 		status, err := device.Configurator.Status(ctx, switchID)
 		if err == nil && status.SwitchID == switchID {
 			return device.Configurator, nil

@@ -14,3 +14,5 @@ export type Alarm={id:string;severity:'critical'|'warning'|'info';category:strin
 export type AlarmReport={generatedAt:string;healthPercent:number;criticalCount:number;warningCount:number;infoCount:number;checksOk:string[];alarms:Alarm[]};
 export type EventBaselineCheck={id:string;title:string;description:string;ok:boolean};
 export type EventBaselineStatus={switchId:string;checkedAt:string;healthy:boolean;checks:EventBaselineCheck[]};
+export type DiscoveredSwitch={address:string;status:'connected'|'credentials-required';message?:string;name?:string};
+export type NetworkScanReport={ranges:string[];results:DiscoveredSwitch[];switches:Switch[]};

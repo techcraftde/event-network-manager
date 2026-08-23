@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"event-network-manager/backend/internal/domain"
 	"event-network-manager/backend/internal/storage"
 )
 
@@ -32,17 +33,19 @@ func NewServicesFromEnvironment() Services {
 		}
 		targets = append(targets, target{Address: address, Username: username, Password: password})
 	}
-	if targets[0].Address == "" || targets[0].Username == "" || targets[0].Password == "" {
-		log.Print("device credentials not configured; using demo adapter")
-		return NewMockServices()
-	}
 	store, err := storage.Open(os.Getenv("ENM_DATABASE_PATH"))
 	if err != nil {
 		log.Printf("SQLite unavailable (%v); using in-memory snapshots", err)
 	}
 	var snapshots SnapshotStore
+	var preferences RoleStore
 	if store != nil {
 		snapshots = store
+		preferences = store
+	} else {
+		fallback := &MockAdapter{profiles: domain.DefaultRoleProfiles(), switchNames: map[string]string{}, roleRollbacks: map[string][]domain.PortSetting{}}
+		snapshots = fallback
+		preferences = fallback
 	}
 	devices := []Services{}
 	for _, target := range targets {
@@ -60,16 +63,9 @@ func NewServicesFromEnvironment() Services {
 		devices = append(devices, services)
 	}
 	if len(devices) == 0 {
-		log.Print("no SG350 adapters available; using demo adapter")
-		return NewMockServices()
+		log.Print("no SG350 adapters connected; network scan remains available")
 	}
-	if len(devices) == 1 {
-		devices[0].Preferences = store
-		return devices[0]
-	}
-	services := NewMultiServices(devices, snapshots)
-	services.Preferences = store
-	return services
+	return NewManagedServices(devices, snapshots, preferences, os.Getenv("ENM_SWITCH_VERIFY_TLS") != "1")
 }
 
 func keychainPassword(address string) string {

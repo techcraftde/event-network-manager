@@ -20,9 +20,9 @@ fn main() {
             let mut command = Command::new(backend_binary());
             command
                 .env("ENM_DATABASE_PATH", data_dir.join("enm.db"))
-                .env("ENM_SWITCH_ADDRESS", std::env::var("ENM_SWITCH_ADDRESS").unwrap_or_else(|_| "192.168.250.55".into()))
-                .env("ENM_SWITCH_USERNAME", std::env::var("ENM_SWITCH_USERNAME").unwrap_or_else(|_| "admin".into()))
                 .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+            if let Ok(address) = std::env::var("ENM_SWITCH_ADDRESS") { command.env("ENM_SWITCH_ADDRESS", address); }
+            if let Ok(username) = std::env::var("ENM_SWITCH_USERNAME") { command.env("ENM_SWITCH_USERNAME", username); }
             if let Ok(password) = std::env::var("ENM_SWITCH_PASSWORD") { command.env("ENM_SWITCH_PASSWORD", password); }
             if let Ok(targets) = std::env::var("ENM_SWITCHES_JSON") { command.env("ENM_SWITCHES_JSON", targets); }
             let child = command.spawn().map_err(|error| format!("Backend konnte nicht gestartet werden: {error}"))?;

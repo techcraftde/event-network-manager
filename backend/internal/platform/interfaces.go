@@ -10,6 +10,10 @@ import (
 type Discovery interface {
 	Discover(context.Context) ([]domain.Switch, error)
 }
+type NetworkScanner interface {
+	ScanNetwork(context.Context, domain.NetworkScanRequest) (domain.NetworkScanReport, error)
+	ConnectDiscoveredSwitch(context.Context, domain.SwitchCredentialRequest) (domain.DiscoveredSwitch, error)
+}
 type Telemetry interface {
 	Topology(context.Context) (domain.Topology, error)
 }

@@ -12,6 +12,11 @@ Snapshots in SQLite.
 - Verständliche, frei wählbare Port- und Switch-Namen; VLAN, PVID, QoS, IGMP,
   EEE und PoE werden aus zentralen Rollenprofilen abgeleitet
 - Multi-Switch-Topologie mit LLDP-/CDP- und MAC-/ARP-Endgeräteerkennung
+- echter Laufzeit-Netzwerkscan über den am Mac angeschlossenen privaten
+  Event-Netzbereich (typisch `192.168.250.1–254`), ohne festes Startgerät
+- maskierte Zugangsdatenabfrage pro gefundenem Switch; falsche Passwörter können
+  sofort erneut eingegeben und erfolgreiche Zugänge optional im macOS-
+  Schlüsselbund gespeichert werden
 - physische SG350-28(P)-Frontansicht mit zwei RJ45-Reihen und separatem
   Combo-/SFP-Uplinkblock; Bedienung zeigt konsequent `Port 1` bis `Port 28`
 - Switchübergreifende Auslastungsübersicht mit Kapazitätsbalken, Sitzungsspitzen,
@@ -50,10 +55,11 @@ Freigegebene lokale Artefakte werden in `outputs/` erzeugt. Sie sind absichtlich
 nicht im Repository eingecheckt. Der aktuelle Build ist für Apple Silicon
 ad-hoc signiert; eine Apple-Notarisierung ist noch nicht enthalten.
 
-Beim gebündelten Testprofil wird das Ziel `192.168.250.55` mit Benutzer `admin`
-verwendet. Das Passwort wird unter dem Dienst `app.eventnetwork.manager` und dem
-Switch als Account im macOS-Schlüsselbund gesucht. Es wird weder in Dateien noch
-in Git oder SQLite gespeichert.
+Die gebündelte App hat kein festes Startgerät mehr. Der Scanner erkennt den
+lokalen privaten Bereich des angeschlossenen Event-Netzwerkadapters und fragt
+Zugänge pro Switch ab. Gespeicherte Passwörter werden unter dem Dienst
+`app.eventnetwork.manager` und der Switch-IP als Account im macOS-Schlüsselbund
+gesucht. Sie werden weder in Dateien noch in Git oder SQLite gespeichert.
 
 ## Entwicklung
 

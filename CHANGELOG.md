@@ -2,6 +2,37 @@
 
 Alle wesentlichen Änderungen an Event Network Manager werden hier dokumentiert.
 
+## 0.5.1 – 2026-08-23
+
+### Behoben
+
+- „Netzwerk scannen“ lädt nicht mehr nur bereits bekannte Geräte neu, sondern
+  durchsucht den real angeschlossenen privaten Event-Netzbereich
+- Kein 15-Sekunden-Startversuch mehr auf dem früher fest eingebauten Ziel
+  `192.168.250.55`; der Scanner ist auch ohne bekannten Switch sofort verfügbar
+- Ein leerer Gerätebestand wird als echte leere Topologie statt als Demo-Netz
+  ausgeliefert
+
+### Hinzugefügt
+
+- Automatische Ermittlung des lokalen Bereichs, hier `192.168.250.1–254`
+- Optionales Eingabefeld für einen anderen privaten Scanbereich
+- Maskierte Benutzer-/Passwortabfrage für jeden gefundenen Switch
+- Wiederholbare Anmeldung bei falschem Passwort mit Hinweis auf relevante
+  Groß-/Kleinschreibung
+- Optionales Speichern eines erfolgreich geprüften Passworts im macOS-
+  Schlüsselbund; keine Ablage in Git, SQLite oder Logs
+- Laufzeitfähiger Multi-Switch-Manager, der neu angemeldete Geräte ohne
+  Backend-Neustart in Topologie, Telemetrie und Konfiguration übernimmt
+
+### Geprüft
+
+- Live-Scan fand die Cisco-Geräte `192.168.250.51` und `192.168.250.56`
+- Beide Geräte erscheinen mit eigener Zugangsdatenabfrage
+- Passwortfeld ist maskiert und „Verbinden“ ohne Passwort deaktiviert
+- Öffentliche Bereiche wie `192.160.250.x` sowie Scans über 1024 Adressen werden
+  serverseitig abgelehnt
+
 ## 0.5.0 – 2026-08-22
 
 ### Hinzugefügt

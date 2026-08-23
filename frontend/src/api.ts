@@ -1,7 +1,8 @@
-import type {AlarmReport,ConfigPlan,ConfigStatus,DanteHealth,EventBaselineStatus,RolePortRequest,RoleProfile,Snapshot,Topology} from './types';
+import type {AlarmReport,ConfigPlan,ConfigStatus,DanteHealth,DiscoveredSwitch,EventBaselineStatus,NetworkScanReport,RolePortRequest,RoleProfile,Snapshot,Topology} from './types';
 const base=import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8787';
 export function getTopology():Promise<Topology>{return json('/api/topology')}
-export async function scan():Promise<void>{await json('/api/discovery',{method:'POST'})}
+export function scan(ranges:string[]=[]):Promise<NetworkScanReport>{return json('/api/discovery',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ranges})})}
+export function connectDiscoveredSwitch(address:string,username:string,password:string,remember:boolean):Promise<DiscoveredSwitch>{return json('/api/discovery/credentials',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({address,username,password,remember})})}
 export function getSnapshots(switchId=''):Promise<Snapshot[]>{return json(`/api/snapshots?switchId=${encodeURIComponent(switchId)}`)}
 async function json<T>(path:string,init?:RequestInit):Promise<T>{const r=await fetch(`${base}${path}`,init);const body=await r.json();if(!r.ok)throw new Error(body.error??`HTTP ${r.status}`);return body}
 export function getConfigStatus(switchId:string):Promise<ConfigStatus>{return json(`/api/config/status?switchId=${encodeURIComponent(switchId)}`)}

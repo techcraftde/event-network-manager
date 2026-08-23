@@ -223,6 +223,30 @@ type Snapshot struct {
 	SizeBytes     int       `json:"sizeBytes"`
 }
 
+type NetworkScanRequest struct {
+	Ranges []string `json:"ranges"`
+}
+
+type DiscoveredSwitch struct {
+	Address string `json:"address"`
+	Status  string `json:"status"`
+	Message string `json:"message,omitempty"`
+	Name    string `json:"name,omitempty"`
+}
+
+type NetworkScanReport struct {
+	Ranges   []string           `json:"ranges"`
+	Results  []DiscoveredSwitch `json:"results"`
+	Switches []Switch           `json:"switches"`
+}
+
+type SwitchCredentialRequest struct {
+	Address  string `json:"address"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Remember bool   `json:"remember"`
+}
+
 type Alarm struct {
 	ID             string    `json:"id"`
 	Severity       string    `json:"severity"`
