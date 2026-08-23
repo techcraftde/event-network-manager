@@ -2,6 +2,25 @@
 
 Alle wesentlichen Änderungen an Event Network Manager werden hier dokumentiert.
 
+## 0.5.2 – 2026-08-23
+
+### Behoben
+
+- Der Cisco-Weblogin übernimmt die vom SG350 im HTTP-Header gelieferte
+  `sessionID` jetzt wie die originale Weboberfläche in die Session-Cookies
+- Gültige Cisco-Anmeldestatus für Initial-, Komplexitäts- und
+  Ablaufwarnungen werden nicht mehr pauschal als falsches Passwort behandelt
+- Ein Switch wird erst als verbunden veröffentlicht, nachdem der erste echte
+  Topologie- und Portabruf erfolgreich war; fehlgeschlagene Sitzungen blockieren
+  keine erneute Eingabe korrigierter Zugangsdaten mehr
+
+### Live geprüft
+
+- `192.168.250.51` meldet sich erfolgreich an und erscheint als realer
+  SG350-28 mit 28 Ports, VLANs, aktiven Links und Live-Traffic
+- Der Switch erscheint in der Topologie sowie in der Auswahl unter
+  „Ports & Rollen“ mit physischer Portanordnung
+
 ## 0.5.1 – 2026-08-23
 
 ### Behoben

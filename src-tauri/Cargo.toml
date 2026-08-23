@@ -1,6 +1,6 @@
 [package]
 name = "event-network-manager"
-version = "0.5.1"
+version = "0.5.2"
 description = "Local event network management for Cisco SG350"
 authors = ["Event Network Manager"]
 edition = "2021"

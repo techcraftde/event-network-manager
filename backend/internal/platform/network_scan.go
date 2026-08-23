@@ -143,13 +143,16 @@ func (m *MultiAdapter) connect(ctx context.Context, request domain.SwitchCredent
 		return domain.DiscoveredSwitch{}, err
 	}
 	services.Preferences = m.preferences
-	m.mu.Lock()
-	m.devices = append(m.devices, services)
-	m.mu.Unlock()
 	topology, err := services.Telemetry.Topology(ctx)
 	if err != nil {
 		return domain.DiscoveredSwitch{}, err
 	}
+	// Only publish a device after both login and the first real data request
+	// succeeded. This keeps a failed session from shadowing a later retry with
+	// corrected credentials.
+	m.mu.Lock()
+	m.devices = append(m.devices, services)
+	m.mu.Unlock()
 	name := request.Address
 	if len(topology.Switches) > 0 {
 		name = topology.Switches[0].Name

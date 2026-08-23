@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -254,16 +255,50 @@ func (a *SG350WebAdapter) login(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("encrypt Cisco login: %w", err)
 	}
-	var result actionResponse
 	loginPath := a.mtsPath + "/config/system.xml?action=login&cred=" + hex.EncodeToString(ciphertext)
-	if err := a.getXML(ctx, loginPath, &result); err != nil {
+	body, headers, err := a.getBodyWithHeaders(ctx, loginPath)
+	if err != nil {
 		return err
 	}
-	if result.Status.Code != "0" {
+	var result actionResponse
+	if err := xml.NewDecoder(strings.NewReader(body)).Decode(&result); err != nil {
+		return fmt.Errorf("decode Cisco login response: %w", err)
+	}
+	userStatus, accepted := ciscoLoginUserStatus(result.Status.Code)
+	if !accepted {
 		return fmt.Errorf("Cisco login rejected: %s", result.Status.Message)
 	}
+	baseURL, err := url.Parse(a.baseURL)
+	if err != nil {
+		return fmt.Errorf("parse Cisco address: %w", err)
+	}
+	cookies := []*http.Cookie{
+		{Name: "userStatus", Value: userStatus, Path: "/", Secure: baseURL.Scheme == "https"},
+		{Name: "app", Value: "switch", Path: "/", Secure: baseURL.Scheme == "https"},
+	}
+	if sessionID := strings.TrimSpace(headers.Get("sessionID")); sessionID != "" {
+		cookies = append(cookies, &http.Cookie{Name: "sessionID", Value: sessionID, Path: "/", Secure: baseURL.Scheme == "https", HttpOnly: true})
+	}
+	a.client.Jar.SetCookies(baseURL, cookies)
 	a.loggedInAt = time.Now()
 	return nil
+}
+
+func ciscoLoginUserStatus(code string) (string, bool) {
+	switch code {
+	case "0":
+		return "ok", true
+	case "10":
+		return "simple", true
+	case "12":
+		return "initial", true
+	case "13":
+		return "dueExpire", true
+	case "14":
+		return "initComp", true
+	default:
+		return "", false
+	}
 }
 
 func escapeCisco(value string) string {
@@ -282,24 +317,29 @@ func (a *SG350WebAdapter) getXML(ctx context.Context, path string, target any) e
 }
 
 func (a *SG350WebAdapter) getBody(ctx context.Context, path string) (string, error) {
+	body, _, err := a.getBodyWithHeaders(ctx, path)
+	return body, err
+}
+
+func (a *SG350WebAdapter) getBodyWithHeaders(ctx context.Context, path string) (string, http.Header, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.baseURL+path, nil)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	req.Header.Set("Accept", "application/xml,text/xml")
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("GET %s: %w", path, err)
+		return "", nil, fmt.Errorf("GET %s: %w", path, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GET %s: HTTP %d", path, resp.StatusCode)
+		return "", resp.Header.Clone(), fmt.Errorf("GET %s: HTTP %d", path, resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
-		return "", fmt.Errorf("read %s: %w", path, err)
+		return "", resp.Header.Clone(), fmt.Errorf("read %s: %w", path, err)
 	}
-	return string(body), nil
+	return string(body), resp.Header.Clone(), nil
 }
 
 func (a *SG350WebAdapter) Discover(ctx context.Context) ([]domain.Switch, error) {
