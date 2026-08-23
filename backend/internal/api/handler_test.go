@@ -1,11 +1,41 @@
 package api
 
 import (
+	"event-network-manager/backend/internal/domain"
 	"event-network-manager/backend/internal/platform"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestInferPortRoleFromLiveVLANMembership(t *testing.T) {
+	profiles := domain.DefaultRoleProfiles()
+	tests := []struct {
+		name string
+		port domain.Port
+		want string
+	}{
+		{name: "untagged membership overrides stale pvid", port: domain.Port{VLANMode: "Access", PVID: 1, VLANs: []int{1, 2}, UntaggedVLANs: []int{2}}, want: "control"},
+		{name: "pvid fallback", port: domain.Port{VLANMode: "Access", PVID: 3}, want: "lighting"},
+		{name: "single membership fallback", port: domain.Port{VLANMode: "Access", VLANs: []int{5}}, want: "video"},
+		{name: "management trunk", port: domain.Port{VLANMode: "Trunk", PVID: 4000, VLANs: []int{1, 2, 3, 4, 4000}, TaggedVLANs: []int{1, 2, 3, 4}, UntaggedVLANs: []int{4000}}, want: "trunk"},
+		{name: "foreign trunk remains unassigned", port: domain.Port{VLANMode: "Trunk", PVID: 1, VLANs: []int{1, 2}, TaggedVLANs: []int{2}}, want: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			profile, found := inferPortRoleFromVLAN(test.port, profiles)
+			if test.want == "" {
+				if found {
+					t.Fatalf("unexpected role %q", profile.ID)
+				}
+				return
+			}
+			if !found || profile.ID != test.want {
+				t.Fatalf("role = %q, found = %v; want %q", profile.ID, found, test.want)
+			}
+		})
+	}
+}
 
 func TestTopology(t *testing.T) {
 	r := httptest.NewRequest("GET", "/api/topology", nil)

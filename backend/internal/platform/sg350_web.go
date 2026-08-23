@@ -276,12 +276,23 @@ func (a *SG350WebAdapter) login(ctx context.Context) error {
 		{Name: "userStatus", Value: userStatus, Path: "/", Secure: baseURL.Scheme == "https"},
 		{Name: "app", Value: "switch", Path: "/", Secure: baseURL.Scheme == "https"},
 	}
-	if sessionID := strings.TrimSpace(headers.Get("sessionID")); sessionID != "" {
+	if sessionID := ciscoSessionCookieValue(headers.Get("sessionID")); sessionID != "" {
 		cookies = append(cookies, &http.Cookie{Name: "sessionID", Value: sessionID, Path: "/", Secure: baseURL.Scheme == "https", HttpOnly: true})
 	}
 	a.client.Jar.SetCookies(baseURL, cookies)
 	a.loggedInAt = time.Now()
 	return nil
+}
+
+func ciscoSessionCookieValue(header string) string {
+	value := strings.TrimSpace(header)
+	if separator := strings.IndexByte(value, ';'); separator >= 0 {
+		value = value[:separator]
+	}
+	if name, cookieValue, found := strings.Cut(value, "="); found && strings.EqualFold(strings.TrimSpace(name), "sessionID") {
+		value = cookieValue
+	}
+	return strings.TrimSpace(value)
 }
 
 func ciscoLoginUserStatus(code string) (string, bool) {

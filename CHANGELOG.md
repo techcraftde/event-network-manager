@@ -2,6 +2,30 @@
 
 Alle wesentlichen Änderungen an Event Network Manager werden hier dokumentiert.
 
+## 0.5.3 – 2026-08-23
+
+### Behoben
+
+- Portrollen werden aus der tatsächlich vom Switch gelesenen
+  VLAN-Mitgliedschaft erkannt, auch wenn das separate SG350-PVID-Feld veraltet
+  oder widersprüchlich ist
+- Erkennungsreihenfolge: Trunk/Management über Trunk-Modus und VLAN 4000,
+  Access-Rollen über untagged VLAN, anschließend PVID und eindeutige
+  VLAN-Mitgliedschaft
+- Die Rollenauswahl im Porteditor zeigt bei einem einzelnen bereits
+  zugeordneten Port direkt dessen aktuelle Rolle; bei mehreren Ports gilt dies,
+  wenn alle dieselbe Rolle haben
+- Cisco-Session-Header mit angehängten Cookie-Attributen werden normalisiert,
+  sodass keine fortlaufenden Cookie-Warnungen mehr entstehen
+
+### Live geprüft
+
+- VLAN 1 → Dante/Audio, VLAN 2 → Control, VLAN 3 → Lighting,
+  VLAN 4 → Internet und VLAN 4000 → Trunk/Management auf beiden verbundenen
+  SG350-Geräten
+- Topologie, physische Portansicht, Inspector und Porteditor zeigen dieselben
+  erkannten Rollen
+
 ## 0.5.2 – 2026-08-23
 
 ### Behoben

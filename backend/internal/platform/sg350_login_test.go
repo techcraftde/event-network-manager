@@ -33,7 +33,7 @@ func TestCiscoLoginCopiesHeaderSessionIntoCookies(t *testing.T) {
 				case "/test/mts/config/device/wcd":
 					_, _ = fmt.Fprintf(w, `<ResponseData><DeviceConfiguration><EncryptionSetting><passwEncryptEnable>1</passwEncryptEnable><rsaPublicKey>%s</rsaPublicKey><loginToken>test-token</loginToken></EncryptionSetting></DeviceConfiguration></ResponseData>`, publicKey)
 				case "/test/mts/config/system.xml":
-					w.Header().Set("sessionID", "test-session")
+					w.Header().Set("sessionID", "sessionID=test-session; Path=/; HttpOnly")
 					_, _ = fmt.Fprintf(w, `<ResponseData><ActionStatus><statusCode>%s</statusCode><statusString>accepted</statusString></ActionStatus></ResponseData>`, test.code)
 				default:
 					http.NotFound(w, r)

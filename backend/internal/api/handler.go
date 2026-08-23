@@ -449,12 +449,80 @@ func (h *Handler) decorateTopology(r *http.Request, topology *domain.Topology) e
 					port.Role = profile.Name
 				}
 			}
-			if port.Role == "" {
+			if port.RoleID == "" {
+				if profile, found := inferPortRoleFromVLAN(*port, profiles); found {
+					port.RoleID = profile.ID
+					port.Role = profile.Name
+				}
+			}
+			if port.RoleID == "" {
 				port.Role = "Nicht zugewiesen"
 			}
 		}
 	}
 	return nil
+}
+
+func inferPortRoleFromVLAN(port domain.Port, profiles []domain.RoleProfile) (domain.RoleProfile, bool) {
+	accessByVLAN := map[int]domain.RoleProfile{}
+	var trunk *domain.RoleProfile
+	for i := range profiles {
+		profile := profiles[i]
+		if strings.EqualFold(profile.PortMode, "trunk") {
+			copy := profile
+			trunk = &copy
+		} else if profile.VLANID > 0 {
+			accessByVLAN[profile.VLANID] = profile
+		}
+	}
+
+	trunkLike := strings.EqualFold(port.VLANMode, "trunk") || len(port.TaggedVLANs) > 0
+	if trunkLike {
+		if trunk != nil && portHasVLAN(port, trunk.VLANID) {
+			return *trunk, true
+		}
+		// A trunk that does not carry the configured management VLAN must not
+		// accidentally be presented as an access role because of its native VLAN.
+		return domain.RoleProfile{}, false
+	}
+
+	if profile, found := uniqueAccessRole(port.UntaggedVLANs, accessByVLAN); found {
+		return profile, true
+	}
+	if profile, found := accessByVLAN[port.PVID]; found {
+		return profile, true
+	}
+	return uniqueAccessRole(port.VLANs, accessByVLAN)
+}
+
+func uniqueAccessRole(vlans []int, profiles map[int]domain.RoleProfile) (domain.RoleProfile, bool) {
+	var matched domain.RoleProfile
+	found := false
+	for _, vlanID := range vlans {
+		profile, ok := profiles[vlanID]
+		if !ok {
+			continue
+		}
+		if found && profile.ID != matched.ID {
+			return domain.RoleProfile{}, false
+		}
+		matched, found = profile, true
+	}
+	return matched, found
+}
+
+func portHasVLAN(port domain.Port, vlanID int) bool {
+	if vlanID <= 0 || port.PVID == vlanID {
+		return vlanID > 0
+	}
+	for _, values := range [][]int{port.VLANs, port.TaggedVLANs, port.UntaggedVLANs} {
+		for _, candidate := range values {
+			if candidate == vlanID {
+				return true
+			}
+		}
+	}
+	return false
 }
 func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
 	if scanner, ok := h.services.Discovery.(platform.NetworkScanner); ok {

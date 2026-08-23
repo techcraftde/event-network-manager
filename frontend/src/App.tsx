@@ -77,8 +77,9 @@ function PortsRolesView({data,profiles,selected,onSelectSwitch,onApplied}:{data:
   const[selectedPorts,setSelectedPorts]=useState<Set<number>>(new Set([1])),[roleId,setRoleId]=useState(''),[singleName,setSingleName]=useState(''),[namePattern,setNamePattern]=useState(''),[plan,setPlan]=useState<ConfigPlan|null>(null),[status,setStatus]=useState<ConfigStatus|null>(null),[busy,setBusy]=useState(false),[notice,setNotice]=useState(''),[applyPhase,setApplyPhase]=useState<ApplyPhase|null>(null);
   const selectedKey=[...selectedPorts].sort((a,b)=>a-b).join(',');
   const selectedItems=sw?.ports.filter(port=>selectedPorts.has(port.index))??[];
+  const selectedStateKey=selectedItems.map(port=>`${port.index}:${port.displayName}:${port.roleId}`).join('|');
   useEffect(()=>{if(sw){setSelectedPorts(new Set([sw.ports[0]?.index??1]));void getConfigStatus(sw.id).then(setStatus).catch(e=>setNotice(message(e)))}},[sw?.id]);
-  useEffect(()=>{if(selectedItems.length===1)setSingleName(portLabel(selectedItems[0]));setPlan(null)},[selectedKey,selectedItems[0]?.displayName]);
+  useEffect(()=>{if(selectedItems.length===1)setSingleName(portLabel(selectedItems[0]));const roles=new Set(selectedItems.map(port=>port.roleId).filter(Boolean));setRoleId(roles.size===1&&selectedItems.every(port=>port.roleId)?[...roles][0]:'');setPlan(null)},[selectedKey,selectedStateKey]);
   if(!data||!sw)return <Loading/>;
   const settings:RolePortRequest[]=selectedItems.map(port=>({portIndex:port.index,displayName:selectedItems.length===1?singleName.trim():(namePattern.trim()?namePattern.trim().replaceAll('{n}',String(port.index)):portLabel(port)),roleId}));
   function choose(index:number){setSelectedPorts(current=>{const next=new Set(current);if(next.has(index))next.delete(index);else next.add(index);return next});setPlan(null)}
