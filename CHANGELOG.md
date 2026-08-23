@@ -2,6 +2,47 @@
 
 Alle wesentlichen Änderungen an Event Network Manager werden hier dokumentiert.
 
+## 0.6.0 – 2026-08-23
+
+### Hinzugefügt
+
+- Neues Dashboard als Startseite mit Systemzustand, erreichbaren Switches,
+  Gesamttraffic, Portfehlern, höchster Auslastung und den wichtigsten Alarmen
+- Event-Modus mit sichtbarem Drei-Sekunden-Countdown; der beim Einschalten
+  gelesene Linkzustand wird zur Referenz und spätere Linkänderungen nennen
+  Switch, Port sowie – soweit erkannt – Gerät und IP-Adresse
+- „Identify“-Aktion in der Switch-Übersicht: ein realer SG350 lässt seine
+  Port-LEDs 30 Sekunden blinken
+- Direkte, sichtbare SSH-Schlüsselbestätigung mit Fingerabdruck in Switches,
+  Event-Grundsetup und Dante-Zustand; die gewünschte Aktion läuft danach weiter
+- Eigene Switch-Auswahl im Event-Grundsetup
+- Optionale Lastsortierung in Live Traffic; Standard bleibt die feste
+  physische Reihenfolge
+
+### Behoben
+
+- Switches werden stabil nach Management-IP und Ports nach Nummer sortiert,
+  unabhängig von Antwortzeit oder schwankendem Live-Traffic
+- Zuletzt bekannte, vorübergehend nicht erreichbare Switches bleiben als
+  `offline` im Bestand; aus 2/2 wird korrekt 1/2 samt kritischem Alarm statt 1/1
+- Topologiekanten werden aus echten LLDP-/CDP-Zielen berechnet und enden an den
+  zugehörigen Switch- oder Geräteknoten
+- LLDP-/CDP-Geräte aller Switches werden in der kombinierten Topologie erhalten;
+  bekannte Switch-Nachbarn werden zu echten Switch-zu-Switch-Links zusammengeführt
+- Physische SG350-28(P)-Reihenfolge korrigiert: oben Port 1–12, unten Port 13–24,
+  daneben der eigene Combo-/SFP-Block 25–28
+
+### Live geprüft
+
+- Stabiler Bestand und IP-Reihenfolge mit den realen Geräten
+  `192.168.250.51` und `192.168.250.56`
+- Reale CDP-Verbindung zwischen beiden Geräten endet in der Topologie an beiden
+  Switch-Knoten
+- `system light duration 30` wurde auf einem realen SG350-28 erfolgreich
+  ausgeführt
+- Dashboard, Event-Modus, Countdown, physische Portreihen und feste
+  Live-Traffic-Sortierung wurden in der laufenden App geprüft
+
 ## 0.5.3 – 2026-08-23
 
 ### Behoben

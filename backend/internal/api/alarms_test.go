@@ -1,6 +1,7 @@
 package api
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +24,21 @@ func TestAlarmMonitorDetectsEventRisks(t *testing.T) {
 		if !found {
 			t.Errorf("missing category %s", category)
 		}
+	}
+}
+
+func TestEventModeReportsLinkLossWithRecognizedDevice(t *testing.T) {
+	monitor := newAlarmMonitor()
+	before := domain.Topology{Switches: []domain.Switch{{ID: "stage", Name: "Stage", Status: "online", Ports: []domain.Port{{Index: 7, DisplayName: "Lichtpult", Link: true, SpeedMbps: 1000}}}}, Devices: []domain.ConnectedDevice{{ID: "console", SwitchID: "stage", PortIndex: 7, Name: "grandMA3", IPAddress: "192.168.250.70"}}}
+	monitor.setEventMode(true, before)
+	after := before
+	after.Switches[0].Ports[0].Link = false
+	report := monitor.evaluate(after)
+	if !report.EventMode || report.CriticalCount != 1 || len(report.Alarms) != 1 {
+		t.Fatalf("report=%#v", report)
+	}
+	if !strings.Contains(report.Alarms[0].Message, "grandMA3") || report.Alarms[0].Category != "Link-Änderung" {
+		t.Fatalf("alarm=%#v", report.Alarms[0])
 	}
 }
 

@@ -562,6 +562,30 @@ func (a *SG350SSHConfigurator) SaveStartup(ctx context.Context, switchID string)
 	return nil
 }
 
+func (a *SG350SSHConfigurator) Identify(ctx context.Context, switchID string, durationSeconds int) error {
+	if switchID != a.config.SwitchID {
+		return fmt.Errorf("unknown switch %q", switchID)
+	}
+	if durationSeconds < 5 || durationSeconds > 300 {
+		return errors.New("Identify-Dauer muss zwischen 5 und 300 Sekunden liegen")
+	}
+	a.sshMu.Lock()
+	defer a.sshMu.Unlock()
+	client, err := a.dial(ctx)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	// SG350 standalone units use `system light duration N`. The `unit`
+	// variant is only valid for stackable models and is rejected by SG350-28.
+	command := fmt.Sprintf("system light duration %d", durationSeconds)
+	output, runErr := a.run(client, []string{"terminal datadump", command})
+	if runErr != nil || cliErrorPattern.MatchString(output) {
+		return fmt.Errorf("Switch konnte nicht identifiziert werden: %s", cleanCLIError(output, runErr))
+	}
+	return nil
+}
+
 func (a *SG350SSHConfigurator) executeRollback(ctx context.Context, commands []string) error {
 	client, err := a.dial(ctx)
 	if err != nil {

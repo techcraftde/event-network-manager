@@ -1,4 +1,4 @@
-import type {AlarmReport,ConfigPlan,ConfigStatus,DanteHealth,DiscoveredSwitch,EventBaselineStatus,NetworkScanReport,RolePortRequest,RoleProfile,Snapshot,Topology} from './types';
+import type {AlarmReport,ConfigPlan,ConfigStatus,DanteHealth,DiscoveredSwitch,EventBaselineStatus,EventModeStatus,NetworkScanReport,RolePortRequest,RoleProfile,Snapshot,Topology} from './types';
 const base=import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8787';
 export function getTopology():Promise<Topology>{return json('/api/topology')}
 export function scan(ranges:string[]=[]):Promise<NetworkScanReport>{return json('/api/discovery',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ranges})})}
@@ -20,6 +20,8 @@ export function createRolePlan(switchId:string,ports:RolePortRequest[]):Promise<
 export function applyRolePlan(plan:ConfigPlan,settings:RolePortRequest[]):Promise<Snapshot>{return json('/api/config/apply-role',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan,settings})})}
 export function saveSwitchName(switchId:string,name:string):Promise<void>{return json('/api/switches/name',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({switchId,name})})}
 export function getAlarms():Promise<AlarmReport>{return json('/api/alarms')}
+export function setEventMode(enabled:boolean):Promise<EventModeStatus>{return json('/api/event-mode',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled})})}
+export function identifySwitch(switchId:string,durationSeconds=30):Promise<{ok:boolean;durationSeconds:number}>{return json('/api/switches/identify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({switchId,durationSeconds})})}
 export function getEventBaseline(switchId:string):Promise<EventBaselineStatus>{return json(`/api/config/event-baseline?switchId=${encodeURIComponent(switchId)}`)}
 export function createEventBaselinePlan(switchId:string):Promise<ConfigPlan>{return json('/api/config/event-baseline-plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({switchId})})}
 export function applyEventBaseline(plan:ConfigPlan):Promise<Snapshot>{return json('/api/config/apply-event-baseline',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan})})}

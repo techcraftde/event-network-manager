@@ -76,6 +76,20 @@ func TestSaveStartupEndpoint(t *testing.T) {
 	}
 }
 
+func TestIdentifyAndEventModeEndpoints(t *testing.T) {
+	h := NewHandler(platform.NewMockServices())
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("POST", "/api/switches/identify", strings.NewReader(`{"switchId":"foh","durationSeconds":30}`)))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"ok":true`) {
+		t.Fatalf("identify status=%d body=%s", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("PUT", "/api/event-mode", strings.NewReader(`{"enabled":true}`)))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"enabled":true`) {
+		t.Fatalf("event mode status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestRolePlanEndpoint(t *testing.T) {
 	r := httptest.NewRequest("POST", "/api/config/role-plan", strings.NewReader(`{"switchId":"foh","ports":[{"portIndex":2,"displayName":"Lichtpult","roleId":"lighting"}]}`))
 	w := httptest.NewRecorder()

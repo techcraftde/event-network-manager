@@ -434,7 +434,7 @@ func (a *SG350WebAdapter) Topology(ctx context.Context) (domain.Topology, error)
 	links := make([]domain.Link, 0, len(a.static.neighbors))
 	devices := make([]domain.ConnectedDevice, 0, len(a.static.neighbors))
 	for i, neighbor := range a.static.neighbors {
-		neighborID := fmt.Sprintf("neighbor-%d-%s", i, safeID(neighbor.name))
+		neighborID := fmt.Sprintf("%s-neighbor-%d-%s", switchID, i, safeID(neighbor.name))
 		devices = append(devices, domain.ConnectedDevice{ID: neighborID, SwitchID: switchID, PortIndex: neighbor.localPort, Name: neighbor.name, Model: neighbor.model, SuggestedRole: inferDeviceRole(neighbor.name + " " + neighbor.model), Protocol: neighbor.protocol})
 		links = append(links, domain.Link{
 			ID:             fmt.Sprintf("%s-%s-%d", switchID, neighborID, neighbor.localPort),

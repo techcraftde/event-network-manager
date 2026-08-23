@@ -35,6 +35,9 @@ type Configurator interface {
 	Apply(context.Context, domain.ConfigChange) (domain.Snapshot, error)
 	Rollback(context.Context, string) error
 }
+type SwitchIdentifier interface {
+	Identify(context.Context, string, int) error
+}
 
 // ReferenceResetPlanner is intentionally separate from Configurator so future
 // adapters can opt in only when they can read the live configuration first.

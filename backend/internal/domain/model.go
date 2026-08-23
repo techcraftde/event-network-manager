@@ -264,11 +264,22 @@ type Alarm struct {
 }
 
 type AlarmReport struct {
-	GeneratedAt   time.Time `json:"generatedAt"`
-	HealthPercent int       `json:"healthPercent"`
-	CriticalCount int       `json:"criticalCount"`
-	WarningCount  int       `json:"warningCount"`
-	InfoCount     int       `json:"infoCount"`
-	ChecksOK      []string  `json:"checksOk"`
-	Alarms        []Alarm   `json:"alarms"`
+	GeneratedAt    time.Time `json:"generatedAt"`
+	EventMode      bool      `json:"eventMode"`
+	EventModeSince time.Time `json:"eventModeSince,omitempty"`
+	HealthPercent  int       `json:"healthPercent"`
+	CriticalCount  int       `json:"criticalCount"`
+	WarningCount   int       `json:"warningCount"`
+	InfoCount      int       `json:"infoCount"`
+	ChecksOK       []string  `json:"checksOk"`
+	Alarms         []Alarm   `json:"alarms"`
+}
+
+type EventModeRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+type EventModeStatus struct {
+	Enabled   bool      `json:"enabled"`
+	EnabledAt time.Time `json:"enabledAt,omitempty"`
 }

@@ -114,8 +114,9 @@ func (m *MockAdapter) Apply(ctx context.Context, change domain.ConfigChange) (do
 	return s, nil
 }
 
-func (m *MockAdapter) SaveStartup(context.Context, string) error { return nil }
-func (m *MockAdapter) Rollback(context.Context, string) error    { return nil }
+func (m *MockAdapter) SaveStartup(context.Context, string) error   { return nil }
+func (m *MockAdapter) Identify(context.Context, string, int) error { return nil }
+func (m *MockAdapter) Rollback(context.Context, string) error      { return nil }
 func (m *MockAdapter) Save(_ context.Context, s domain.Snapshot) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

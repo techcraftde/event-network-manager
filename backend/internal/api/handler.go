@@ -22,6 +22,9 @@ func NewHandler(services platform.Services) http.Handler {
 	mux.HandleFunc("GET /api/health", h.health)
 	mux.HandleFunc("GET /api/topology", h.topology)
 	mux.HandleFunc("GET /api/alarms", h.alarms)
+	mux.HandleFunc("GET /api/event-mode", h.eventMode)
+	mux.HandleFunc("PUT /api/event-mode", h.eventMode)
+	mux.HandleFunc("POST /api/switches/identify", h.identifySwitch)
 	mux.HandleFunc("POST /api/discovery", h.discovery)
 	mux.HandleFunc("POST /api/discovery/credentials", h.discoveryCredentials)
 	mux.HandleFunc("GET /api/snapshots", h.snapshots)
@@ -45,6 +48,50 @@ func NewHandler(services platform.Services) http.Handler {
 	mux.HandleFunc("POST /api/config/apply", h.apply)
 	mux.HandleFunc("POST /api/config/rollback/{id}", h.rollback)
 	return cors(mux)
+}
+func (h *Handler) identifySwitch(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		SwitchID string `json:"switchId"`
+		Duration int    `json:"durationSeconds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || strings.TrimSpace(request.SwitchID) == "" {
+		write(w, 400, map[string]string{"error": "ungültige Anfrage"})
+		return
+	}
+	if request.Duration == 0 {
+		request.Duration = 30
+	}
+	identifier, ok := h.services.Configurator.(platform.SwitchIdentifier)
+	if !ok {
+		write(w, 503, map[string]string{"error": "Identify ist in diesem Betriebsmodus nicht verfügbar"})
+		return
+	}
+	err := identifier.Identify(r.Context(), request.SwitchID, request.Duration)
+	respond(w, map[string]any{"ok": err == nil, "durationSeconds": request.Duration}, err)
+}
+
+func (h *Handler) eventMode(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		respond(w, h.monitor.eventModeStatus(), nil)
+		return
+	}
+	var request domain.EventModeRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		write(w, 400, map[string]string{"error": "ungültige Anfrage"})
+		return
+	}
+	topology, err := h.services.Telemetry.Topology(r.Context())
+	if err == nil {
+		err = h.decorateTopology(r, &topology)
+	}
+	if err == nil {
+		h.enrichDevices(r, &topology)
+	}
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	respond(w, h.monitor.setEventMode(request.Enabled, topology), nil)
 }
 func (h *Handler) applyReferenceReset(w http.ResponseWriter, r *http.Request) {
 	var request struct {

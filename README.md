@@ -7,18 +7,25 @@ Snapshots in SQLite.
 
 ## Funktionen
 
+- Dashboard für den Veranstaltungsbetrieb mit Systemzustand, Alarmen,
+  erreichbaren Switches, Gesamttraffic, Portfehlern und Spitzenauslastung
+- zuschaltbarer Event-Modus mit automatischem Drei-Sekunden-Check und Alarm bei
+  Linkausfall/-wiederkehr inklusive Switch, Port und erkanntem Gerät
 - Rollenbasierte Mehrfach-Portkonfiguration für Dante/Audio, Control, Lighting,
   Video, Internet und das gemeinsame Profil Trunk/Management
 - Verständliche, frei wählbare Port- und Switch-Namen; VLAN, PVID, QoS, IGMP,
   EEE und PoE werden aus zentralen Rollenprofilen abgeleitet
 - Multi-Switch-Topologie mit LLDP-/CDP- und MAC-/ARP-Endgeräteerkennung
+- stabile Switch-Reihenfolge nach Management-IP, echte Kanten zu Linkpartnern
+  und „Identify“-Button zum 30-sekündigen Blinken der Switch-Port-LEDs
 - echter Laufzeit-Netzwerkscan über den am Mac angeschlossenen privaten
   Event-Netzbereich (typisch `192.168.250.1–254`), ohne festes Startgerät
 - maskierte Zugangsdatenabfrage pro gefundenem Switch; falsche Passwörter können
   sofort erneut eingegeben und erfolgreiche Zugänge optional im macOS-
   Schlüsselbund gespeichert werden
 - physische SG350-28(P)-Frontansicht mit zwei RJ45-Reihen und separatem
-  Combo-/SFP-Uplinkblock; Bedienung zeigt konsequent `Port 1` bis `Port 28`
+  Combo-/SFP-Uplinkblock: oben Port 1–12, unten Port 13–24, separat Port 25–28;
+  Bedienung zeigt konsequent `Port 1` bis `Port 28`
 - Switchübergreifende Auslastungsübersicht mit Kapazitätsbalken, Sitzungsspitzen,
   Sortierung und Filtern nach Switch, Rolle und Linkstatus
 - Event-Check und Alarmsystem für Erreichbarkeit, Auslastung, Dante-Link-Speed,
@@ -46,7 +53,8 @@ Snapshots in SQLite.
   Ansicht ohne lokale Port-Zuordnungen
 - physische Zwei-Reihen-Portanordnung inklusive Uplinkblock direkt in jedem
   Switch-Knoten der Topologie
-- SSH-Host-Key-Pinning; Passwörter bleiben im macOS-Schlüsselbund
+- SSH-Host-Key-Pinning mit sichtbarer Bestätigungsaktion in allen betroffenen
+  Ansichten; Passwörter bleiben im macOS-Schlüsselbund
 - lokale HTTP-API als Grenze für einen späteren Proxmox-Remote-Agent
 
 ## macOS-Build

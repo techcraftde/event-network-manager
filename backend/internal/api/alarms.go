@@ -11,17 +11,52 @@ import (
 )
 
 type alarmMonitor struct {
-	mu        sync.Mutex
-	firstSeen map[string]time.Time
+	mu             sync.Mutex
+	firstSeen      map[string]time.Time
+	eventMode      bool
+	eventModeSince time.Time
+	previousLinks  map[string]observedLink
+	eventAlarms    map[string]domain.Alarm
 }
 
-func newAlarmMonitor() *alarmMonitor { return &alarmMonitor{firstSeen: map[string]time.Time{}} }
+type observedLink struct {
+	up         bool
+	switchID   string
+	switchName string
+	portIndex  int
+	portName   string
+	deviceName string
+}
+
+func newAlarmMonitor() *alarmMonitor {
+	return &alarmMonitor{firstSeen: map[string]time.Time{}, previousLinks: map[string]observedLink{}, eventAlarms: map[string]domain.Alarm{}}
+}
+
+func (m *alarmMonitor) setEventMode(enabled bool, topology domain.Topology) domain.EventModeStatus {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.eventMode = enabled
+	m.previousLinks = observeLinks(topology)
+	m.eventAlarms = map[string]domain.Alarm{}
+	if enabled {
+		m.eventModeSince = time.Now().UTC()
+	} else {
+		m.eventModeSince = time.Time{}
+	}
+	return domain.EventModeStatus{Enabled: m.eventMode, EnabledAt: m.eventModeSince}
+}
+
+func (m *alarmMonitor) eventModeStatus() domain.EventModeStatus {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return domain.EventModeStatus{Enabled: m.eventMode, EnabledAt: m.eventModeSince}
+}
 
 func (m *alarmMonitor) evaluate(topology domain.Topology) domain.AlarmReport {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now().UTC()
-	report := domain.AlarmReport{GeneratedAt: now, HealthPercent: 100, Alarms: []domain.Alarm{}}
+	report := domain.AlarmReport{GeneratedAt: now, EventMode: m.eventMode, EventModeSince: m.eventModeSince, HealthPercent: 100, Alarms: []domain.Alarm{}}
 	active := map[string]bool{}
 	add := func(alarm domain.Alarm) {
 		active[alarm.ID] = true
@@ -39,6 +74,40 @@ func (m *alarmMonitor) evaluate(topology domain.Topology) domain.AlarmReport {
 			report.WarningCount++
 		default:
 			report.InfoCount++
+		}
+	}
+	if m.eventMode {
+		current := observeLinks(topology)
+		for key, value := range current {
+			previous, found := m.previousLinks[key]
+			if !found || previous.up == value.up {
+				continue
+			}
+			device := value.deviceName
+			if device == "" {
+				device = previous.deviceName
+			}
+			deviceText := ""
+			if device != "" {
+				deviceText = " (" + device + ")"
+			}
+			alarm := domain.Alarm{ID: "event-link-" + key, Category: "Link-Änderung", SwitchID: value.switchID, SwitchName: value.switchName, PortIndex: value.portIndex, PortName: value.portName, DetectedAt: now}
+			if value.up {
+				alarm.Severity = "info"
+				alarm.Title = "Link verbunden"
+				alarm.Message = fmt.Sprintf("%s%s ist jetzt verbunden.", value.portName, deviceText)
+				alarm.Recommendation = "Prüfen, ob die Verbindung während der Veranstaltung erwartet wurde."
+			} else {
+				alarm.Severity = "critical"
+				alarm.Title = "Link ausgefallen"
+				alarm.Message = fmt.Sprintf("%s%s hat die Verbindung verloren.", value.portName, deviceText)
+				alarm.Recommendation = "Gerät, Stromversorgung und Kabel sofort prüfen."
+			}
+			m.eventAlarms[alarm.ID] = alarm
+		}
+		m.previousLinks = current
+		for _, alarm := range m.eventAlarms {
+			add(alarm)
 		}
 	}
 	for _, sw := range topology.Switches {
@@ -154,6 +223,32 @@ func (m *alarmMonitor) evaluate(topology domain.Topology) domain.AlarmReport {
 		report.ChecksOK = append(report.ChecksOK, "PoE-Budget im sicheren Bereich")
 	}
 	return report
+}
+
+func observeLinks(topology domain.Topology) map[string]observedLink {
+	devices := map[string]string{}
+	for _, device := range topology.Devices {
+		name := device.Name
+		if device.IPAddress != "" && device.IPAddress != name {
+			name += " · " + device.IPAddress
+		}
+		devices[fmt.Sprintf("%s-%d", device.SwitchID, device.PortIndex)] = name
+	}
+	result := map[string]observedLink{}
+	for _, sw := range topology.Switches {
+		if sw.Status != "online" {
+			continue
+		}
+		for _, port := range sw.Ports {
+			key := fmt.Sprintf("%s-%d", sw.ID, port.Index)
+			name := port.DisplayName
+			if name == "" {
+				name = fmt.Sprintf("Port %d", port.Index)
+			}
+			result[key] = observedLink{up: port.Link, switchID: sw.ID, switchName: sw.Name, portIndex: port.Index, portName: name, deviceName: devices[key]}
+		}
+	}
+	return result
 }
 
 func hasCategory(alarms []domain.Alarm, category string) bool {
